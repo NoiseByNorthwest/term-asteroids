@@ -1,0 +1,17 @@
+{
+    "name": "noisebynorthwest/term-asteroids",
+    "autoload": {
+        "psr-4": {
+            "NoiseByNorthwest\\TermAsteroids\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "NoiseByNorthwest",
+            "email": "noisebynorthwest@gmail.com"
+        }
+    ],
+    "require": {
+        "ext-ffi": "^8.2"
+    }
+}
