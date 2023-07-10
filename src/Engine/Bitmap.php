@@ -13,6 +13,8 @@ class Bitmap
      */
     private array $pixels;
 
+    private \FFI\CData $nativePixels;
+
     public static function generateVerticalGradient(int $width, int $height, array $colorGradient, bool $loopBack = false): self
     {
         $pixels = array_fill(0, $width * $height, 0);
@@ -76,6 +78,26 @@ class Bitmap
         $this->width = $width;
         $this->height = $height;
         $this->pixels = $pixels;
+
+        $this->buildNativePixels();
+    }
+
+    private function buildNativePixels(): void
+    {
+        $this->nativePixels = \FFI::new(sprintf('int64_t[%d]', count($this->pixels)));
+        for ($i=0; $i<count($this->pixels); $i++){
+            $this->nativePixels[$i] = $this->pixels[$i];
+        }
+    }
+
+    public function __sleep(): array
+    {
+        return ['width', 'height', 'pixels'];
+    }
+
+    public function __wakeup(): void
+    {
+        $this->buildNativePixels();
     }
 
     /**
@@ -100,6 +122,11 @@ class Bitmap
     public function getPixels(): array
     {
         return $this->pixels;
+    }
+
+    public function getNativePixels(): \FFI\CData
+    {
+        return $this->nativePixels;
     }
 
     public function withCenteredRotation(float $angle): self
