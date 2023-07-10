@@ -85,7 +85,7 @@ class Bitmap
     private function buildNativePixels(): void
     {
         $this->nativePixels = \FFI::new(sprintf('int64_t[%d]', count($this->pixels)));
-        for ($i=0; $i<count($this->pixels); $i++){
+        for ($i = 0; $i < count($this->pixels); $i++){
             $this->nativePixels[$i] = $this->pixels[$i];
         }
     }
