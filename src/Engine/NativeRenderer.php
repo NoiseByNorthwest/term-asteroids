@@ -10,8 +10,6 @@ class NativeRenderer implements RendererInterface
 
     private object $nativeRendererFfi;
 
-    private object $bitmapPixelsFfiBuffer;
-
     private object $horizontalBackgroundDistortionOffsetsFfiBuffer;
 
     public function __construct(int $width, int $height)
@@ -52,7 +50,6 @@ class NativeRenderer implements RendererInterface
 
     public function __destruct()
     {
-        \FFI::free(\FFI::addr($this->horizontalBackgroundDistortionOffsetsFfiBuffer));
         $this->ffi->NativeRenderer_destroy($this->nativeRendererFfi);
     }
 
