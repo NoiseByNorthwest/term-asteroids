@@ -44,11 +44,6 @@ class NativeRenderer implements RendererInterface
 
         $this->nativeRendererFfi = $this->ffi->NativeRenderer_create($width, $height);
 
-        $this->bitmapPixelsFfiBuffer = \FFI::new(sprintf(
-            'int64_t[%d]',
-            self::BITMAP_DIMENSION_MAX_SIZE ** 2)
-        );
-
         $this->horizontalBackgroundDistortionOffsetsFfiBuffer = \FFI::new(sprintf(
             'int64_t[%d]',
             self::BITMAP_DIMENSION_MAX_SIZE
@@ -57,7 +52,6 @@ class NativeRenderer implements RendererInterface
 
     public function __destruct()
     {
-        \FFI::free(\FFI::addr($this->bitmapPixelsFfiBuffer));
         \FFI::free(\FFI::addr($this->horizontalBackgroundDistortionOffsetsFfiBuffer));
         $this->ffi->NativeRenderer_destroy($this->nativeRendererFfi);
     }
@@ -85,8 +79,7 @@ class NativeRenderer implements RendererInterface
     ): void {
         $bitmapWidth = $bitmap->getWidth();
         $bitmapHeight = $bitmap->getHeight();
-        $bitmapPixelCount = $bitmapWidth * $bitmapHeight;
-        $bitmapPixels = $bitmap->getPixels();
+        $bitmapNativePixels = $bitmap->getNativePixels();
 
         if (
             $bitmapWidth > self::BITMAP_DIMENSION_MAX_SIZE ||
@@ -99,17 +92,13 @@ class NativeRenderer implements RendererInterface
             ));
         }
 
-        for ($i = 0; $i < $bitmapPixelCount; $i++) {
-            $this->bitmapPixelsFfiBuffer[$i] = $bitmapPixels[$i];
-        }
-
         for ($i = 0; $i < $bitmapHeight; $i++) {
             $this->horizontalBackgroundDistortionOffsetsFfiBuffer[$i] = $horizontalBackgroundDistortionOffsets[$i] ?? 0;
         }
 
         $this->ffi->NativeRenderer_drawBitmap(
             $this->nativeRendererFfi,
-            $this->bitmapPixelsFfiBuffer,
+            $bitmapNativePixels,
             $bitmapWidth,
             $bitmapHeight,
             $x,
