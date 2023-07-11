@@ -124,7 +124,7 @@ class Screen
 
     public function setAdaptivePerformance(bool $adaptivePerformance): void
     {
-        $this->adaptivePerformance = false;
+        $this->adaptivePerformance = $adaptivePerformance;
     }
 
     /**
