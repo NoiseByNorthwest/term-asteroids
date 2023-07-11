@@ -120,17 +120,17 @@ PHP version: 8.2.6
 
 CPU: Intel(R) Core(TM) i7-9850H CPU @ 2.60GHz
 
-|                              |          Native Renderer + JIT |                Native Renderer |             PHP Renderer + JIT |                   PHP Renderer |
-|------------------------------| ------------------------------ | ------------------------------ | ------------------------------ | ------------------------------ |
-| Execution time               |                          20.4s |                          20.4s |                          20.4s |                          20.4s |
-| Rendered frames              |                            777 |                            665 |                            614 |                            352 |
-| Average frame time           |                         26.3ms |                         30.7ms |                         33.3ms |                         57.9ms |
-| Average framerate            |                       38.1 FPS |                       32.6 FPS |                       30.1 FPS |                       17.3 FPS |
-| Average gameplay+physic time |                          6.8ms |                         10.5ms |                          7.1ms |                         12.3ms |
-| Average rendering time       |                         19.5ms |                         20.2ms |                         26.2ms |                         45.6ms |
-| Average drawing time         |                          3.1ms |                          4.9ms |                          7.2ms |                         21.6ms |
-| Average update time          |                          1.2ms |                          1.2ms |                          5.4ms |                         11.4ms |
-| Average flushing time        |                         15.2ms |                         14.2ms |                         13.6ms |                         12.6ms |
+|                                |          Native Renderer + JIT |                Native Renderer |             PHP Renderer + JIT |                   PHP Renderer |
+| ------------------------------ | ------------------------------ | ------------------------------ | ------------------------------ | ------------------------------ |
+|                 Execution time |                          20.7s |                          20.9s |                          20.7s |                          20.9s |
+|                Rendered frames |                            909 |                            746 |                            609 |                            369 |
+|             Average frame time |                         22.7ms |                         28.0ms |                         33.9ms |                         56.7ms |
+|              Average framerate |                       44.0 FPS |                       35.7 FPS |                       29.5 FPS |                       17.6 FPS |
+|   Average gameplay+physic time |                          7.0ms |                         11.0ms |                          7.8ms |                         13.5ms |
+|         Average rendering time |                         15.8ms |                         17.0ms |                         26.1ms |                         43.2ms |
+|           Average drawing time |                          1.7ms |                          1.9ms |                          7.6ms |                         20.7ms |
+|            Average update time |                          1.1ms |                          1.2ms |                          5.4ms |                         11.1ms |
+|          Average flushing time |                         13.0ms |                         13.9ms |                         13.1ms |                         11.4ms |
 
 
 Time breakdown explanation:
