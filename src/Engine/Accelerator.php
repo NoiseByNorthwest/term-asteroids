@@ -7,6 +7,8 @@ class Accelerator
     private float $maxVelocity;
     private float $timeFromStopToMaxVelocity;
     private float $timeFromMaxVelocityToStop;
+    private float $stopDelay;
+    private bool $autoStart;
     private float $startTime;
     private float $stopTime;
     private float $lastStepTime;
@@ -15,13 +17,28 @@ class Accelerator
         float $maxVelocity,
         float $timeFromStopToMaxVelocity,
         float $timeFromMaxVelocityToStop,
-        float $stopDelay = INF
+        float $stopDelay = INF,
+        bool $autoStart = true
     ) {
         $this->maxVelocity = $maxVelocity;
         $this->timeFromStopToMaxVelocity = $timeFromStopToMaxVelocity;
         $this->timeFromMaxVelocityToStop = $timeFromMaxVelocityToStop;
+        $this->stopDelay = $stopDelay;
+        $this->autoStart = $autoStart;
 
-        $this->restart(null, $stopDelay);
+        $this->reset();
+    }
+
+    public function reset(?float $maxVelocity = null): void
+    {
+        $this->maxVelocity = $maxVelocity ?? $this->maxVelocity;
+        $this->startTime = INF;
+        $this->stopTime = INF;
+        $this->lastStepTime = INF;
+
+        if ($this->autoStart) {
+            $this->restart(null, $this->stopDelay);
+        }
     }
 
     /**
@@ -55,26 +72,31 @@ class Accelerator
 
     public function getDeceleration(): float
     {
-        return $this->maxVelocity / $this->getTimeFromMaxVelocityToStop();
+        $timeFromMaxVelocityToStop = $this->getTimeFromMaxVelocityToStop();
+        if ($timeFromMaxVelocityToStop === 0.0) {
+            return PHP_FLOAT_MAX;
+        }
+
+        return $this->maxVelocity / $timeFromMaxVelocityToStop;
     }
 
     public function restart(?float $time = null, $stopDelay = INF): void
     {
-        $this->startTime = $time ?? Timer::getCurrentTime();
+        $this->startTime = $time ?? Timer::getCurrentGameTime();
         $this->stopTime = $this->startTime + $stopDelay;
         $this->lastStepTime = $this->startTime;
     }
 
     public function stop(?float $time = null): void
     {
-        $this->stopTime = $time ?? Timer::getCurrentTime();
-        assert($this->startTime < $this->stopTime);
+        $this->stopTime = $time ?? Timer::getCurrentGameTime();
+        assert($this->startTime <= $this->stopTime);
     }
 
     public function getVelocity(?float $time = null): float
     {
         if ($time === null) {
-            $time = Timer::getCurrentTime();
+            $time = Timer::getCurrentGameTime();
         }
 
         if ($time <= $this->startTime) {
@@ -98,7 +120,7 @@ class Accelerator
 
     public function isStopped(): bool
     {
-        return $this->getVelocity() === 0.0;
+        return Timer::getCurrentGameTime() > $this->startTime && $this->getVelocity() === 0.0;
     }
 
     public function getTimeToStop(?float $time = null): float
@@ -109,7 +131,7 @@ class Accelerator
     public function getDistance(?float $time = null): float
     {
         if ($time === null) {
-            $time = Timer::getCurrentTime();
+            $time = Timer::getCurrentGameTime();
         }
 
         if ($time <= $this->startTime) {
@@ -145,7 +167,7 @@ class Accelerator
 
     public function getDistanceSinceLastStep(): float
     {
-        $newStepTime = Timer::getCurrentTime();
+        $newStepTime = Timer::getCurrentGameTime();
         $distance = $this->getDistance($newStepTime) - $this->getDistance($this->lastStepTime);
         $this->lastStepTime = $newStepTime;
 

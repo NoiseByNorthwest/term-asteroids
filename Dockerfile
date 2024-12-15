@@ -1,12 +1,15 @@
-FROM php:8.2.6-bullseye
+ARG phpImageVer
+FROM php:${phpImageVer}
 
 RUN apt-get update \
     && apt-get install -y \
-        zlib1g-dev git libffi-dev \
+        sudo zlib1g-dev git libffi-dev xterm \
     && rm -rf /var/lib/apt/lists/*
 
 RUN docker-php-ext-configure ffi --with-ffi \
     && docker-php-ext-install ffi
+
+RUN pecl install igbinary-3.2.16 && docker-php-ext-enable igbinary
 
 RUN cd /tmp/ \
     && git clone https://github.com/NoiseByNorthwest/php-spx.git \
@@ -27,11 +30,8 @@ RUN echo > /usr/local/etc/php/conf.d/spx.ini \
    && echo 'spx.http_key="dev"' >> /usr/local/etc/php/conf.d/spx.ini \
    && echo 'spx.http_ip_whitelist="*"' >> /usr/local/etc/php/conf.d/spx.ini
 
-RUN apt-get update \
-    && apt-get install -y xterm \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN useradd -ms /bin/bash xterm
-USER xterm
+RUN useradd -ms /bin/bash term-asteroids
+RUN echo "\nterm-asteroids ALL=(ALL) NOPASSWD: ALL\n" >> /etc/sudoers
+USER term-asteroids
 
 WORKDIR /var/www/html

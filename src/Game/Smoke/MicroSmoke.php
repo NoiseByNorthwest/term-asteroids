@@ -3,17 +3,17 @@
 namespace NoiseByNorthwest\TermAsteroids\Game\Smoke;
 
 use NoiseByNorthwest\TermAsteroids\Engine\Math;
-use NoiseByNorthwest\TermAsteroids\Game\Flame\VerySmallFlame;
+use NoiseByNorthwest\TermAsteroids\Game\Flame\MicroFlame;
 
-class VerySmallSmoke extends Smoke
+class MicroSmoke extends Smoke
 {
     public static function getMaxAcquiredCount(): ?int
     {
-        return 140;
+        return 50;
     }
 
     public static function getSize(): int
     {
-        return Math::roundToInt(VerySmallFlame::getSize() * static::getFlameSizeRatio());
+        return Math::roundToInt(MicroFlame::getSize() * static::getFlameSizeRatio());
     }
 }

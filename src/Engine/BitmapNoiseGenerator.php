@@ -11,6 +11,7 @@ class BitmapNoiseGenerator
         mixed $seed = null,
         float $shift = 0,
         float $radius = 1,
+        float $zFactor = 1,
         ?array $scales = null,
         int $maxScaleCount = 6
     ): Bitmap {
@@ -18,13 +19,16 @@ class BitmapNoiseGenerator
 
         return CacheUtils::memoize(
             [
+                __METHOD__,
                 $width,
                 $height,
                 $colorGradient,
                 $seed,
                 round($shift, 2),
                 round($radius, 2),
-                $scales
+                round($zFactor, 2),
+                $scales,
+                $maxScaleCount
             ],
             function () use(
                 $width,
@@ -33,13 +37,14 @@ class BitmapNoiseGenerator
                 $seed,
                 $shift,
                 $radius,
+                $zFactor,
                 $scales,
                 $maxScaleCount
             ) {
                 $colorGradient = array_map(fn ($e) => ColorUtils::createColor($e), $colorGradient);
 
                 if ($scales === null) {
-                    $currentScale = $width * 0.3;
+                    $currentScale = $width * 0.6;
                     $scales = [];
                     while ($currentScale > 1) {
                         $scales[] = $currentScale;
@@ -71,11 +76,14 @@ class BitmapNoiseGenerator
                             continue;
                         }
 
-                        $z /= $maxZ * 1;
+                        $z /= $maxZ;
+
+                        assert($z <= 1);
+                        assert($z >= 0);
 
                         $pixels[$y * $width + $x] = ColorUtils::createColorWithinGradient(
                             $colorGradient,
-                            $z
+                            Math::bound($z * $zFactor)
                         );
                     }
                 }
@@ -93,7 +101,9 @@ class BitmapNoiseGenerator
         float $radius,
         array $scales
     ): array {
-        $cacheKey = serialize([
+        static $cache = [];
+
+        $cacheKey = igbinary_serialize([
             $width,
             $height,
             $seed,
@@ -102,10 +112,9 @@ class BitmapNoiseGenerator
             $scales
         ]);
 
-        $maxScale = $scales[array_key_last($scales)];
-
-        static $cache = [];
         if (!isset($cache[$cacheKey])) {
+            $maxScale = $scales[array_key_last($scales)];
+
             $pixels = array_fill(0, $width * $height, 0);
 
             for ($y = 0; $y < $height; $y++) {
@@ -119,19 +128,22 @@ class BitmapNoiseGenerator
                     } else {
                         $z = 1;
                         foreach ($scales as $k => $r) {
-                            $point = new Vec2($x / $r + $shift, $y / $r + $shift);
+                            $pX = $x / $r + $shift;
+                            $pY = $y / $r + $shift;
 
                             $z *= Math::lerp(
                                 Math::lerp(0.8, 0, $r / $maxScale),
                                 1,
                                 self::perlin(
-                                    $point->getX(),
-                                    $point->getY(),
+                                    $pX,
+                                    $pY,
                                     count($scales) > 1 && $k !== count($scales) - 1 ? 1 : $seed
                                 ) * 0.5 + 0.5
                             );
                         }
                     }
+
+                    assert($z >= 0);
 
                     if ($z > 0) {
                         $z *= cos((1.1 / $radius) * M_PI_2 * $distY);
@@ -166,7 +178,7 @@ class BitmapNoiseGenerator
 
         $x0 = (int) floor($x);
         $x1 = $x0 + 1;
-        $y0 = (int)floor($y);
+        $y0 = (int) floor($y);
         $y1 = $y0 + 1;
 
         $sx = $x - $x0;
@@ -189,24 +201,32 @@ class BitmapNoiseGenerator
 
     private static function dotGridGradient(int $ix, int $iy, float $x, float $y, int $seed): float
     {
-        $gradient = self::randomGradient($ix, $iy, $seed);
+        static $gradientCache = [];
+
+        $gradientCacheKey = $ix . ' ' . $iy . ' ' . $seed;
+        if (isset($gradientCache[$gradientCacheKey])) {
+            $gradient = $gradientCache[$gradientCacheKey];
+        } else {
+            $gradient = self::randomGradient($ix, $iy, $seed);
+            $gradientCache[$gradientCacheKey] = $gradient;
+        }
 
         $dx = $x - $ix;
         $dy = $y - $iy;
 
-        return $dx * $gradient->getX() + $dy * $gradient->getY();
+        return $dx * $gradient[0] + $dy * $gradient[1];
     }
 
-    private static function randomGradient(int $ix, int $iy, int $seed): Vec2
+    private static function randomGradient(int $ix, int $iy, int $seed): array
     {
         $random = 2 * M_PI * (
             (RandomUtils::generateIntegerSeedFromData([$ix, $iy, $seed]) & 0xffffffff)
                 / 0xffffffff
         );
 
-        return new Vec2(
-            cos($random),
-            sin($random),
-        );
+        return [
+            cos($random), // x
+            sin($random), // y
+        ];
     }
 }

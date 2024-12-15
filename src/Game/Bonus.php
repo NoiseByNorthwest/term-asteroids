@@ -7,6 +7,7 @@ use NoiseByNorthwest\TermAsteroids\Engine\BitmapBuilder;
 use NoiseByNorthwest\TermAsteroids\Engine\ColorUtils;
 use NoiseByNorthwest\TermAsteroids\Engine\GameObject;
 use NoiseByNorthwest\TermAsteroids\Engine\Math;
+use NoiseByNorthwest\TermAsteroids\Engine\Mover;
 use NoiseByNorthwest\TermAsteroids\Engine\RandomUtils;
 use NoiseByNorthwest\TermAsteroids\Engine\Sprite;
 use NoiseByNorthwest\TermAsteroids\Engine\SpriteEffect;
@@ -15,11 +16,15 @@ use NoiseByNorthwest\TermAsteroids\Engine\Vec2;
 
 class Bonus extends GameObject
 {
+    public const SIZE = 5;
+
     public const TYPE_BLUE_LASER = 1;
 
     public const TYPE_PLASMA_BALL = 2;
 
     public const TYPE_ENERGY_BEAM = 3;
+
+    public const TYPE_BULLET_TIME = 4;
 
     private static array $typeConfigs = [
         self::TYPE_BLUE_LASER => [
@@ -27,12 +32,16 @@ class Bonus extends GameObject
             'color' => '#00b1ff',
         ],
         self::TYPE_PLASMA_BALL => [
-            'weight' => 8,
+            'weight' => 9,
             'color' => '#cd00cf',
         ],
         self::TYPE_ENERGY_BEAM => [
             'weight' => 4,
             'color' => '#47a247',
+        ],
+        self::TYPE_BULLET_TIME => [
+            'weight' => 2,
+            'color' => '#ffff00',
         ],
     ];
 
@@ -43,8 +52,8 @@ class Bonus extends GameObject
         $color = ColorUtils::createColor([255, 255, 255]);
         parent::__construct(
             new Sprite(
-                5,
-                5,
+                self::SIZE,
+                self::SIZE,
                 [
                     [
                         'name' => 'default',
@@ -78,52 +87,68 @@ class Bonus extends GameObject
                                 (sin($age * 5) + 1) / 2
                             ));
 
-                            $renderingParameters->setBlendingColor(
+                            $renderingParameters->setGlobalBlendingColor(
                                 ColorUtils::createColor(self::$typeConfigs[$this->type]['color'], alpha: 128)
                             );
                         },
                     ),
                 ],
             ),
-            function () {
-                return new Accelerator(
-                    RandomUtils::getRandomFloat(40, 100),
-                    0.1,
-                    0,
-                );
-            },
-            fn () => new Vec2(-1, 0),
-            zIndex: 3,
+            movers: [
+                new Mover(
+                    new Vec2(-1, 0),
+                    new Accelerator(
+                        RandomUtils::getRandomFloat(40, 100),
+                        0.1,
+                        0,
+                    )
+                ),
+            ],
+            zIndex: 4,
         );
     }
 
-    public function init(Vec2 $pos)
+    public function init(): void
     {
-        $this->getPos()->setVec($pos);
         $this->type = self::getRandomType();
         $this->setInitialized();
     }
 
     protected function doUpdate(): void
     {
-        foreach ($this->getOtherGameObjects() as $otherGameObject) {
-            if (! $otherGameObject instanceof Player) {
+        foreach ($this->getGame()->getGameObjects() as $otherGameObject) {
+            if ($this === $otherGameObject) {
                 continue;
             }
 
-            $player = $otherGameObject;
-
-            if (! $player->collidesWith($this)) {
+            if (! $otherGameObject instanceof Spaceship) {
                 continue;
             }
 
-            $player->improveWeaponLevels(
-                blueLaser: $this->type === self::TYPE_BLUE_LASER ? 1 : 0,
-                plasmaBall: $this->type === self::TYPE_PLASMA_BALL ? 1 : 0,
-                energyBeam: $this->type === self::TYPE_ENERGY_BEAM ? 1 : 0,
-            );
+            $spaceship = $otherGameObject;
 
-            $player->repair(Player::getMaxHealth() / 3);
+            if (! $spaceship->collidesWith($this)) {
+                continue;
+            }
+
+            switch ($this->type) {
+                case self::TYPE_BLUE_LASER:
+                case self::TYPE_PLASMA_BALL:
+                case self::TYPE_ENERGY_BEAM:
+                    $spaceship->improveWeaponLevels(
+                        blueLaser: $this->type === self::TYPE_BLUE_LASER ? 1 : 0,
+                        plasmaBall: $this->type === self::TYPE_PLASMA_BALL ? 1 : 0,
+                        energyBeam: $this->type === self::TYPE_ENERGY_BEAM ? 1 : 0,
+                    );
+
+                    $spaceship->repair(Math::roundToInt(Spaceship::getMaxHealth() / 3));
+
+                    break;
+
+                case self::TYPE_BULLET_TIME:
+                    $spaceship->startBulletTime();
+            }
+
 
             $this->setTerminated();
 

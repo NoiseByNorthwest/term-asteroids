@@ -2,18 +2,18 @@
 
 namespace NoiseByNorthwest\TermAsteroids\Game\Asteroid;
 
-use NoiseByNorthwest\TermAsteroids\Game\Flame\VerySmallFlame;
+use NoiseByNorthwest\TermAsteroids\Game\Flame\MicroFlame;
 
-class VerySmallAsteroid extends Asteroid
+class MicroAsteroid extends Asteroid
 {
     public static function getMaxAcquiredCount(): ?int
     {
-        return 35;
+        return 20;
     }
 
     public static function getSize(): int
     {
-        return 10;
+        return 5;
     }
 
     public static function getMaxVariantCount(): int
@@ -23,6 +23,6 @@ class VerySmallAsteroid extends Asteroid
 
     public static function getFlameClassName(): string
     {
-        return VerySmallFlame::class;
+        return MicroFlame::class;
     }
 }

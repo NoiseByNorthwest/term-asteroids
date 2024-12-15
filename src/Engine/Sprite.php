@@ -38,10 +38,6 @@ class Sprite
     ) {
         $this->size = new Vec2($width, $height);
         $this->pos = new Vec2();
-        $this->boundingBox = new AABox(
-            $this->pos->creatRelativePos(-$width / 2, -$height / 2),
-            $this->size
-        );
 
         $this->animations = [];
         foreach ($animationsData as $animationData) {
@@ -61,6 +57,8 @@ class Sprite
         foreach ($effects as $effect) {
             $this->addEffect($effect);
         }
+
+        $this->updateBoundingBox();
     }
 
     public function addEffect(SpriteEffect $effect): void
@@ -81,6 +79,14 @@ class Sprite
         foreach ($this->effects as $effect) {
             $effect->reset();
         }
+    }
+
+    public function updateBoundingBox(): void
+    {
+        $this->boundingBox = new AABox(
+            $this->pos->copy()->add(-$this->size->getWidth() / 2, -$this->size->getHeight() / 2),
+            $this->size
+        );
     }
 
     public function getSize(): Vec2
@@ -180,13 +186,15 @@ class Sprite
             Math::roundToInt($boundingBoxPos->getY()),
             $this->getRenderingParameters()->getGlobalAlpha(),
             $this->getRenderingParameters()->getBrightness(),
-            $this->getRenderingParameters()->getBlendingColor(),
+            $this->getRenderingParameters()->getGlobalBlendingColor(),
+            $this->getRenderingParameters()->getVerticalBlendingColors(),
             $this->getRenderingParameters()->isPersisted(),
             $this->getRenderingParameters()->getPersistedColor(),
+            $this->getRenderingParameters()->getHorizontalDistortionOffsets(),
             $this->getRenderingParameters()->getHorizontalBackgroundDistortionOffsets(),
         );
 
-        if ($screen->isDebug()) {
+        if ($screen->isDebugRectDisplayEnabled()) {
             $screen->drawDebugRect($this->getBoundingBox(), ColorUtils::createColor([0, 0, 128]));
         }
     }

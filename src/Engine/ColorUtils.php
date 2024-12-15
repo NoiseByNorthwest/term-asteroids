@@ -144,7 +144,7 @@ abstract class ColorUtils
         }
 
         return
-            (255 << 24) |
+            (($combinedAlpha & 0xff) << 24) |
             (($color[0] & 0xff) << 16) |
             (($color[1] & 0xff) << 8) |
             ($color[2] & 0xff)

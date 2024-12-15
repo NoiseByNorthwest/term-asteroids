@@ -8,21 +8,22 @@ use NoiseByNorthwest\TermAsteroids\Engine\BitmapNoiseGenerator;
 use NoiseByNorthwest\TermAsteroids\Engine\ColorUtils;
 use NoiseByNorthwest\TermAsteroids\Engine\GameObject;
 use NoiseByNorthwest\TermAsteroids\Engine\Math;
+use NoiseByNorthwest\TermAsteroids\Engine\Mover;
 use NoiseByNorthwest\TermAsteroids\Engine\RandomUtils;
 use NoiseByNorthwest\TermAsteroids\Engine\Sprite;
 use NoiseByNorthwest\TermAsteroids\Engine\SpriteEffect;
+use NoiseByNorthwest\TermAsteroids\Engine\SpriteEffectHelper;
 use NoiseByNorthwest\TermAsteroids\Engine\SpriteRenderingParameters;
 use NoiseByNorthwest\TermAsteroids\Engine\Timer;
 use NoiseByNorthwest\TermAsteroids\Engine\Vec2;
-use NoiseByNorthwest\TermAsteroids\Game\Flame\VerySmallFlame;
+use NoiseByNorthwest\TermAsteroids\Game\Flame\Flame;
+use NoiseByNorthwest\TermAsteroids\Game\Flame\SmallFlame;
 
 class PlasmaBall extends GameObject
 {
     const MAX_VARIANT_COUNT = 9;
 
     private int $initiatorId;
-
-    private Vec2 $dir;
 
     private float $duration;
 
@@ -84,43 +85,56 @@ class PlasmaBall extends GameObject
                                 (int) (255 * min(1.0, ($age / 0.3)))
                             );
 
+                            $height = $this->getSprite()->getHeight();
+                            $maxAmplitude = 7;
+                            $horizontalDistortionOffsets = SpriteEffectHelper::generateHorizontalDistortionOffsets(
+                                height: $height,
+                                amplitude: $maxAmplitude * (0.5 + 0.5 * sin(1.4 * M_PI + 2.5 * $age)),
+                                shearFactor: 11
+                            );
+
+                            $renderingParameters->setHorizontalDistortionOffsets($horizontalDistortionOffsets);
+
                             $renderingParameters->setPersisted(true);
                             $renderingParameters->setPersistedColor(ColorUtils::createColor([128, 0, 128, 112]));
                         },
                     ),
                 ]
             ),
-            function () {
-                return new Accelerator(
-                    120,
-                    0.1,
-                    0,
-                );
-            },
-            fn () => $this->dir
         );
     }
 
     public function init(
         GameObject $initiator,
-        Vec2 $pos,
         Vec2 $dir,
     ): void {
         $this->initiatorId = $initiator->getId();
-        $this->getPos()->setVec($pos);
-        $this->dir = $dir;
         $this->duration = 100;
 
-        $this->setHitBoxes([
-            $this->getBoundingBox()->copy()->grow(factor: 0.65),
+        $this->setMovers([
+            new Mover(
+                $dir,
+                new Accelerator(
+                    120,
+                    0.1,
+                    0,
+                )
+            ),
         ]);
 
         $this->setInitialized();
     }
 
+    protected function resolveHitBoxes(): array
+    {
+        return [
+            $this->getBoundingBox()->copy()->grow(factor: 0.65),
+        ];
+    }
+
     protected function doUpdate(): void
     {
-        $currentTime = Timer::getCurrentFrameStartTime();
+        $currentTime = Timer::getCurrentGameTime();
 
         if ($this->getCreationTime() + $this->duration < $currentTime) {
             $this->setTerminated();
@@ -128,7 +142,11 @@ class PlasmaBall extends GameObject
             return;
         }
 
-        foreach ($this->getOtherGameObjects() as $otherGameObject) {
+        foreach ($this->getGame()->getGameObjects() as $otherGameObject) {
+            if ($this === $otherGameObject) {
+                continue;
+            }
+
             if (!$otherGameObject instanceof DamageableGameObject) {
                 continue;
             }
@@ -141,19 +159,21 @@ class PlasmaBall extends GameObject
                 continue;
             }
 
-            $flame = $this->getPool()->acquire(VerySmallFlame::class);
-            $flame->init(
-                new Vec2(
+            $flame = $this->getPool()->acquire(
+                SmallFlame::class,
+                pos: new Vec2(
                     $this->getBoundingBox()->getRight(),
                     $this->getPos()->getY(),
                 ),
-                $otherGameObject,
-                ColorUtils::createColor([92, 0, 255, 168])
+                initializer: fn (Flame $e) => $e->init(
+                    $otherGameObject,
+                    ColorUtils::createColor([92, 0, 255, 128])
+                ),
             );
 
             $this->getGame()->addGameObject($flame);
 
-            $otherGameObject->hit(Math::roundToInt(4.5 * Player::getMainWeaponPowerIndex()));
+            $otherGameObject->hit(Math::roundToInt(4.5 * Spaceship::getMainWeaponPowerIndex()));
             $this->setTerminated();
 
             break;

@@ -5,6 +5,7 @@ namespace NoiseByNorthwest\TermAsteroids\Game;
 use NoiseByNorthwest\TermAsteroids\Engine\Accelerator;
 use NoiseByNorthwest\TermAsteroids\Engine\BitmapBuilder;
 use NoiseByNorthwest\TermAsteroids\Engine\GameObject;
+use NoiseByNorthwest\TermAsteroids\Engine\Mover;
 use NoiseByNorthwest\TermAsteroids\Engine\RandomUtils;
 use NoiseByNorthwest\TermAsteroids\Engine\Sprite;
 use NoiseByNorthwest\TermAsteroids\Engine\SpriteEffect;
@@ -47,18 +48,20 @@ class Star extends GameObject
                     ),
                 ]
             ),
-            function () use($brightness) {
-                return new Accelerator(
-                    $brightness * 0.5,
-                    0.1,
-                    0,
-                );
-            },
-            fn () => new Vec2(-1, 0)
+            movers: [
+                new Mover(
+                    new Vec2(-1, 0),
+                    new Accelerator(
+                        $brightness * 0.5,
+                        0.1,
+                        0,
+                    )
+                ),
+            ]
         );
     }
 
-    public function init()
+    public function init(): void
     {
         $this->getPos()->set(
             RandomUtils::getRandomInt(2, $this->getScreen()->getWidth() - 3),
@@ -66,6 +69,11 @@ class Star extends GameObject
         );
 
         $this->setInitialized();
+    }
+
+    public function terminateWhenOffScreen(): bool
+    {
+        return false;
     }
 
     protected function doUpdate(): void

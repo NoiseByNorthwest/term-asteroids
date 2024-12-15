@@ -1,66 +1,27 @@
 <?php
 
-namespace NoiseByNorthwest\TermAsteroids\Game\Smoke;
+namespace NoiseByNorthwest\TermAsteroids\Game;
 
 use NoiseByNorthwest\TermAsteroids\Engine\Accelerator;
 use NoiseByNorthwest\TermAsteroids\Engine\Bitmap;
 use NoiseByNorthwest\TermAsteroids\Engine\BitmapNoiseGenerator;
-use NoiseByNorthwest\TermAsteroids\Engine\ClassUtils;
 use NoiseByNorthwest\TermAsteroids\Engine\ColorUtils;
 use NoiseByNorthwest\TermAsteroids\Engine\GameObject;
 use NoiseByNorthwest\TermAsteroids\Engine\Math;
 use NoiseByNorthwest\TermAsteroids\Engine\Mover;
-use NoiseByNorthwest\TermAsteroids\Engine\RandomUtils;
-use NoiseByNorthwest\TermAsteroids\Engine\ScreenAreaStats;
 use NoiseByNorthwest\TermAsteroids\Engine\Sprite;
 use NoiseByNorthwest\TermAsteroids\Engine\SpriteEffect;
 use NoiseByNorthwest\TermAsteroids\Engine\SpriteEffectHelper;
 use NoiseByNorthwest\TermAsteroids\Engine\SpriteRenderingParameters;
-use NoiseByNorthwest\TermAsteroids\Engine\Timer;
 use NoiseByNorthwest\TermAsteroids\Engine\Vec2;
+use NoiseByNorthwest\TermAsteroids\Game\Smoke\HugeSmoke;
+use NoiseByNorthwest\TermAsteroids\Game\Smoke\SmallSmoke;
 
-abstract class Smoke extends GameObject
+class PerlinTest extends GameObject
 {
-    private Vec2 $originalPos;
-
-    private const FRAME_DURATION = 0.03;
-
-    private ?int $blendingColor;
-
-    private float $duration;
-
-    private float $baseVelocity;
-
-    public static function shouldBeExcluded(Vec2 $pos, float $allowedResourceConsumptionRatio): bool
-    {
-        return ScreenAreaStats::get('smoke', $pos) > 2 + 14 * $allowedResourceConsumptionRatio;
-    }
-
-    abstract public static function getSize(): int;
-
-    public static function getFlameSizeRatio(): float
-    {
-        return 1.6;
-    }
-
-    public static function getMaxVariantCount(): int
-    {
-        return 1;
-    }
-
-    public static function warmCaches(): void
-    {
-        foreach (ClassUtils::getLocalChildClassNames(self::class) as $childClassName) {
-            for ($i = 0; $i < $childClassName::getMaxVariantCount(); $i++) {
-                new $childClassName($i);
-            }
-        }
-    }
-
     public function __construct(?int $seed = null)
     {
-        $seed = $seed ?? RandomUtils::getRandomInt(0, self::getMaxVariantCount() - 1);
-        $size = static::getSize();
+        $size = SmallSmoke::getSize();
 
         $color = ColorUtils::createColor([128, 128, 128]);
 
@@ -71,10 +32,10 @@ abstract class Smoke extends GameObject
                 [
                     [
                         'name' => 'default',
-                        'repeat' => false,
+                        'loopBack' => false,
                         'frames' => array_map(
                             fn (Bitmap $e) => [
-                                'duration' => self::FRAME_DURATION,
+                                'duration' => 0.02,
                                 'bitmap' => $e,
                             ],
                             [
@@ -107,7 +68,7 @@ abstract class Smoke extends GameObject
                                     ),
                                     array_keys(array_fill(0, $count, null))
                                 ))(
-                                    Math::roundToInt(Math::lerp(40, 60, $size / HugeSmoke::getSize()))
+                                    Math::lerp(70, 100, $size / HugeSmoke::getSize())
                                 ),
                             ],
                         )
@@ -116,68 +77,45 @@ abstract class Smoke extends GameObject
                 [
                     new SpriteEffect(
                         function (SpriteRenderingParameters $renderingParameters) {
-                            $renderingParameters->setGlobalBlendingColor($this->blendingColor);
-
-                            $completionRatio = $this->getSprite()->getCurrentAnimation()->getCompletionRatio();
-
-                            $renderingParameters->setGlobalAlpha((int) Math::lerpPath([
-                                '0.0' => 220,
-                                '0.6' => 220,
-                                '1.0' => 0,
-                            ], $completionRatio));
-
                             $height = $this->getSprite()->getHeight();
+
                             $horizontalBackgroundDistortionOffsets = SpriteEffectHelper::generateHorizontalDistortionOffsets(
                                 height: $height,
-                                maxAmplitude: Math::lerpPath([
-                                    '0.0' => 0,
-                                    '5.0' => 22,
-                                    '1.0' => 0,
-                                ],$completionRatio),
-                                timeFactor: 5,
-                                shearFactor: 15 * ($height / HugeSmoke::getSize())
+                                maxAmplitude: 10 * $this->getSprite()->getCurrentAnimation()->getCompletionRatio(),
+                                timeFactor: 20,
+                                shearFactor: 3 * ($height / HugeSmoke::getSize())
                             );
 
                             $renderingParameters->setHorizontalBackgroundDistortionOffsets($horizontalBackgroundDistortionOffsets);
                         },
-                    )
-                ],
+                    ),
+                ]
             ),
+            movers: [
+                new Mover(
+                    new Vec2(1, -0.3),
+                    new Accelerator(
+                        0,
+                        0.1,
+                        0,
+                    )
+                ),
+            ],
             zIndex: 1
         );
     }
 
     public function init(
-        ?int $blendingColor = null,
-        ?float $duration = null,
-        float $baseVelocity = 1,
+        bool $repeated = false,
     ): void {
-        $this->originalPos = $this->getPos()->copy();
-        ScreenAreaStats::inc('smoke', $this->originalPos);
-
-        $this->blendingColor = $blendingColor;
-        $this->duration = $duration ?? count($this->getSprite()->getCurrentAnimation()->getFrames()) * self::FRAME_DURATION;
-        $this->baseVelocity = $baseVelocity;
-
-        $this->setMovers([
-            new Mover(
-                new Vec2(1, -0.3),
-                new Accelerator(
-                    $this->baseVelocity * RandomUtils::getRandomInt(10, 30),
-                    0.1,
-                    0,
-                )
-            ),
-        ]);
-
+        $this->getSprite()->getCurrentAnimation()->setRepeated($repeated);
         $this->setInitialized();
     }
 
     protected function doUpdate(): void
     {
-        if (Timer::getCurrentGameTime() - $this->getCreationTime() >= $this->duration) {
+        if ($this->getSprite()->getCurrentAnimation()->isFinished()) {
             $this->setTerminated();
-            ScreenAreaStats::dec('smoke', $this->originalPos);
         }
     }
 }

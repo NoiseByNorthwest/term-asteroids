@@ -9,4 +9,5 @@ usleep(200 * 1000);
     devMode: in_array('--dev-mode', $argv, true),
     benchmarkMode: in_array('--benchmark-mode', $argv, true),
     useNativeRenderer: in_array('--use-native-renderer', $argv, true),
+    kittyKeyboardProtocolSupported: ($_ENV['TERM_ASTEROIDS_KITTY_KBP'] ?? '0') === '1',
 ))->run();

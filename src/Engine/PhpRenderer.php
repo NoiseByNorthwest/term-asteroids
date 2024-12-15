@@ -25,6 +25,8 @@ class PhpRenderer implements RendererInterface
      */
     private array $persistenceBuffer;
 
+    private int $drawnBitmapPixelCount = 0;
+
     public function __construct(int $width, int $height)
     {
         $this->width = $width;
@@ -47,6 +49,8 @@ class PhpRenderer implements RendererInterface
         for ($i = 0; $i < $pixelCount; $i++) {
             $this->currentFrameBuffer[$i] = $color;
         }
+
+        $this->drawnBitmapPixelCount = 0;
     }
 
     public function drawBitmap(
@@ -55,10 +59,13 @@ class PhpRenderer implements RendererInterface
         int    $y,
         int    $globalAlpha = 255,
         float  $brightness = 1,
-        ?int   $blendingColor = null,
+        ?int   $globalBlendingColor = null,
+        array  $verticalBlendingColors = [],
         bool   $persisted = false,
         ?int   $globalPersistedColor = null,
+        array  $horizontalDistortionOffsets = [],
         array  $horizontalBackgroundDistortionOffsets = [],
+        float  $ditheringAlphaRatioThreshold = 0,
     ): void {
         if ($globalAlpha === 0) {
             return;
@@ -70,6 +77,8 @@ class PhpRenderer implements RendererInterface
         $bitmapHeight = $bitmap->getHeight();
         $bitmapPixels = $bitmap->getPixels();
 
+        $fullBrightnessReciprocal = 1 / 255.0;
+
         for ($i = 0; $i < $bitmapHeight; $i++) {
             $pxPosY = $y + $i;
 
@@ -79,10 +88,11 @@ class PhpRenderer implements RendererInterface
                 continue;
             }
 
+            $horizontalDistortionOffset = $horizontalDistortionOffsets[$i] ?? 0;
             $horizontalBackgroundDistortionOffset = $horizontalBackgroundDistortionOffsets[$i] ?? 0;
 
             for ($j = 0; $j < $bitmapWidth; $j++) {
-                $pxPosX = $x + $j;
+                $pxPosX = $x + $j + $horizontalDistortionOffset;
 
                 if (
                     $pxPosX < 0 || $pxPosX >= $width
@@ -101,6 +111,56 @@ class PhpRenderer implements RendererInterface
                     continue;
                 }
 
+                $blendingColor = $globalBlendingColor;
+                $verticalBlendingColor = $verticalBlendingColors[$j] ?? null;
+                if ($blendingColor === null) {
+                    $blendingColor = $verticalBlendingColor;
+                } elseif ($verticalBlendingColor !== null) {
+                    $verticalBlendingColorA = ($verticalBlendingColor >> 24) & 0xff;
+                    if ($verticalBlendingColorA !== 0) {
+                        $blendingColorA = ($blendingColor >> 24) & 0xff;
+                        if ($blendingColorA === 0) {
+                            $blendingColor = $verticalBlendingColor;
+                        } else {
+                            $verticalBlendingColorR = ($verticalBlendingColor >> 16) & 0xff;
+                            $verticalBlendingColorG = ($verticalBlendingColor >> 8) & 0xff;
+                            $verticalBlendingColorB = ($verticalBlendingColor >> 0) & 0xff;
+                            $blendingColorR = ($blendingColor >> 16) & 0xff;
+                            $blendingColorG = ($blendingColor >> 8) & 0xff;
+                            $blendingColorB = ($blendingColor >> 0) & 0xff;
+
+                            $blendingColorAlphaRatio = $blendingColorA / ($blendingColorA + $verticalBlendingColorA);
+
+                            $blendingColorR = (int) (
+                                $blendingColorR * $blendingColorAlphaRatio
+                                    + $verticalBlendingColorR * (1 - $blendingColorAlphaRatio)
+                            );
+
+                            $blendingColorG = (int) (
+                                $blendingColorG * $blendingColorAlphaRatio
+                                    + $verticalBlendingColorG * (1 - $blendingColorAlphaRatio)
+                            );
+
+                            $blendingColorB = (int) (
+                                $blendingColorB * $blendingColorAlphaRatio
+                                    + $verticalBlendingColorB * (1 - $blendingColorAlphaRatio)
+                            );
+
+                            $blendingColorA = (int) (
+                                $blendingColorA * $blendingColorAlphaRatio
+                                    + $verticalBlendingColorA * (1 - $blendingColorAlphaRatio)
+                            );
+
+                            $blendingColor =
+                                $blendingColorA << 24
+                                | $blendingColorR << 16
+                                | $blendingColorG << 8
+                                | $blendingColorB
+                            ;
+                        }
+                    }
+                }
+
                 $persistedColor = $globalPersistedColor ?? $color;
 
                 $pxIndex = $pxPosY * $width + $pxPosX;
@@ -108,7 +168,7 @@ class PhpRenderer implements RendererInterface
                 if (
                     $alpha < 255
                     || $globalAlpha < 255
-                    || $brightness !== 1
+                    || $brightness !== 1.0
                     || $blendingColor !== null
                 ) {
                     $colorR = ($color >> 16) & 0xff;
@@ -125,19 +185,21 @@ class PhpRenderer implements RendererInterface
                         $blendingColorG = ($blendingColor >> 8) & 0xff;
                         $blendingColorB = $blendingColor & 0xff;
 
+                        $blendingColorAlphaRatio = $blendingColorA * $fullBrightnessReciprocal;
+
                         $colorR = (int) (
-                            $blendingColorR * ($blendingColorA / 255.0)
-                            + $colorR * (1 - ($blendingColorA / 255.0))
+                            $blendingColorR * $blendingColorAlphaRatio
+                            + $colorR * (1 - $blendingColorAlphaRatio)
                         );
 
                         $colorG = (int) (
-                            $blendingColorG * ($blendingColorA / 255.0)
-                            + $colorG * (1 - ($blendingColorA / 255.0))
+                            $blendingColorG * $blendingColorAlphaRatio
+                            + $colorG * (1 - $blendingColorAlphaRatio)
                         );
 
                         $colorB = (int) (
-                            $blendingColorB * ($blendingColorA / 255.0)
-                            + $colorB * (1 - ($blendingColorA / 255.0))
+                            $blendingColorB * $blendingColorAlphaRatio
+                            + $colorB * (1 - $blendingColorAlphaRatio)
                         );
                     }
 
@@ -147,7 +209,7 @@ class PhpRenderer implements RendererInterface
 
                     $combinedAlpha = 255;
                     if ($globalAlpha < 255 || $alpha < 255) {
-                        $combinedAlpha = (int) (255 * ($globalAlpha / 255.0) * ($alpha / 255.0));
+                        $combinedAlpha = (int) (255 * ($globalAlpha * $fullBrightnessReciprocal) * ($alpha * $fullBrightnessReciprocal));
                     }
 
                     if ($persisted) {
@@ -160,7 +222,7 @@ class PhpRenderer implements RendererInterface
                             ;
                         }
 
-                        if ($brightness !== 1) {
+                        if ($brightness !== 1.0) {
                             $persistedColor =
                                 ((($persistedColor >> 24) & 0xff) << 24) |
                                 ((((int) ((($persistedColor >> 16) & 0xff) * $brightness) & 0xff)) << 16) |
@@ -171,28 +233,47 @@ class PhpRenderer implements RendererInterface
                     }
 
                     if ($combinedAlpha < 255) {
-                        $backgroundColor = $this->currentFrameBuffer[
-                        $pxIndex + $horizontalBackgroundDistortionOffset
-                        ] ?? 0;
+                        $combinedAlphaRatio = $combinedAlpha * $fullBrightnessReciprocal;
 
-                        $backgroundColorR = ($backgroundColor >> 16) & 0xff;
-                        $backgroundColorG = ($backgroundColor >> 8) & 0xff;
-                        $backgroundColorB = $backgroundColor & 0xff;
+                        if ($ditheringAlphaRatioThreshold !== 0.0 && $combinedAlphaRatio <= $ditheringAlphaRatioThreshold) {
+                            $rn = (214013 * $pxIndex + 2531011) & 0xffff;
+                            $combinedAlphaRatio = ($combinedAlphaRatio * 0xffff) < $rn ? 0.0 : 1.0;
 
-                        $colorR = (int) (
-                            $colorR * ($combinedAlpha / 255.0)
-                            + $backgroundColorR * (1 - ($combinedAlpha / 255.0))
-                        );
+                            if ($combinedAlphaRatio === 0.0 && $horizontalBackgroundDistortionOffset === 0) {
+                                continue;
+                            }
+                        }
 
-                        $colorG = (int) (
-                            $colorG * ($combinedAlpha / 255.0)
-                            + $backgroundColorG * (1 - ($combinedAlpha / 255.0))
-                        );
+                        if ($combinedAlphaRatio !== 1.0) {
+                            $backgroundColor = $this->currentFrameBuffer[
+                                $pxIndex + $horizontalBackgroundDistortionOffset
+                            ] ?? 0;
 
-                        $colorB = (int) (
-                            $colorB * ($combinedAlpha / 255.0)
-                            + $backgroundColorB * (1 - ($combinedAlpha / 255.0))
-                        );
+                            $backgroundColorR = ($backgroundColor >> 16) & 0xff;
+                            $backgroundColorG = ($backgroundColor >> 8) & 0xff;
+                            $backgroundColorB = $backgroundColor & 0xff;
+
+                            if ($combinedAlphaRatio === 0.0) {
+                                $colorR = $backgroundColorR;
+                                $colorG = $backgroundColorG;
+                                $colorB = $backgroundColorB;
+                            } else {
+                                $colorR = (int)(
+                                    $colorR * $combinedAlphaRatio
+                                    + $backgroundColorR * (1 - $combinedAlphaRatio)
+                                );
+
+                                $colorG = (int)(
+                                    $colorG * $combinedAlphaRatio
+                                    + $backgroundColorG * (1 - $combinedAlphaRatio)
+                                );
+
+                                $colorB = (int)(
+                                    $colorB * $combinedAlphaRatio
+                                    + $backgroundColorB * (1 - $combinedAlphaRatio)
+                                );
+                            }
+                        }
                     }
 
                     $color =
@@ -204,45 +285,53 @@ class PhpRenderer implements RendererInterface
                 }
 
                 $this->currentFrameBuffer[$pxIndex] = $color;
+                $this->drawnBitmapPixelCount++;
                 if ($persisted && $alpha > 1) {
                     $currentPersistedColor = $this->persistenceBuffer[$pxIndex];
                     $currentPersistedColorA = ($currentPersistedColor >> 24) & 0xff;
                     if ($currentPersistedColorA <= 2) {
                         $this->persistenceBuffer[$pxIndex] = $persistedColor;
                     } else {
-                        $currentPersistedColorR = ($currentPersistedColor >> 16) & 0xff;
-                        $currentPersistedColorG = ($currentPersistedColor >> 8) & 0xff;
-                        $currentPersistedColorB = $currentPersistedColor & 0xff;
                         $persistedColorA = ($persistedColor >> 24) & 0xff;
-                        $persistedColorR = ($persistedColor >> 16) & 0xff;
-                        $persistedColorG = ($persistedColor >> 8) & 0xff;
-                        $persistedColorB = $persistedColor & 0xff;
-
                         $blendingRatio = $persistedColorA / ($persistedColorA + $currentPersistedColorA);
 
-                        $persistedColorA = $persistedColorA > $currentPersistedColorA ? $persistedColorA : $currentPersistedColorA;
+                        if ($ditheringAlphaRatioThreshold !== 0.0 && $blendingRatio <= $ditheringAlphaRatioThreshold) {
+                            $rn = (214013 * $pxIndex + 2531011) & 0xffff;
+                            $blendingRatio = ($blendingRatio * 0xffff) < $rn ? 0.0 : 1.0;
+                        }
 
-                        $persistedColorR = (int) (
-                            $persistedColorR * $blendingRatio
+                        if ($blendingRatio === 1.0) {
+                            $this->persistenceBuffer[$pxIndex] = $persistedColor;
+                        } else if ($blendingRatio !== 0.0) {
+                            $currentPersistedColorR = ($currentPersistedColor >> 16) & 0xff;
+                            $currentPersistedColorG = ($currentPersistedColor >> 8) & 0xff;
+                            $currentPersistedColorB = $currentPersistedColor & 0xff;
+                            $persistedColorR = ($persistedColor >> 16) & 0xff;
+                            $persistedColorG = ($persistedColor >> 8) & 0xff;
+                            $persistedColorB = $persistedColor & 0xff;
+                            $persistedColorA = $persistedColorA > $currentPersistedColorA ? $persistedColorA : $currentPersistedColorA;
+
+                            $persistedColorR = (int)(
+                                $persistedColorR * $blendingRatio
                                 + $currentPersistedColorR * (1 - $blendingRatio)
-                        );
+                            );
 
-                        $persistedColorG = (int) (
-                            $persistedColorG * $blendingRatio
-                            + $currentPersistedColorG * (1 - $blendingRatio)
-                        );
+                            $persistedColorG = (int)(
+                                $persistedColorG * $blendingRatio
+                                + $currentPersistedColorG * (1 - $blendingRatio)
+                            );
 
-                        $persistedColorB = (int) (
-                            $persistedColorB * $blendingRatio
-                            + $currentPersistedColorB * (1 - $blendingRatio)
-                        );
+                            $persistedColorB = (int)(
+                                $persistedColorB * $blendingRatio
+                                + $currentPersistedColorB * (1 - $blendingRatio)
+                            );
 
-                        $this->persistenceBuffer[$pxIndex] =
-                            (($persistedColorA & 0xff) << 24) |
-                            (($persistedColorR & 0xff) << 16) |
-                            (($persistedColorG & 0xff) << 8) |
-                            ($persistedColorB & 0xff)
-                        ;
+                            $this->persistenceBuffer[$pxIndex] =
+                                (($persistedColorA & 0xff) << 24) |
+                                (($persistedColorR & 0xff) << 16) |
+                                (($persistedColorG & 0xff) << 8) |
+                                ($persistedColorB & 0xff);
+                        }
                     }
                 }
             }
@@ -286,17 +375,28 @@ class PhpRenderer implements RendererInterface
 
                 $pxIndex = $pxPosY * $width + $pxPosX;
                 $this->currentFrameBuffer[$pxIndex] = $color;
+                $this->drawnBitmapPixelCount++;
             }
         }
     }
 
+    public function getDrawnBitmapPixelCount(): int
+    {
+        return $this->drawnBitmapPixelCount;
+    }
+
     function update(
+        bool $trueColorModeEnabled,
         bool $persistenceEffectsEnabled,
         int $persistenceAlphaDecrease,
-        int $colorReductionFactor,
+        int $removedColorDepthBits,
         int $lowResolutionMode,
     ): int {
         $updatedCharacterCount = 0;
+
+        $fullBrightnessReciprocal = 1 / 255.0;
+
+        $colorReductionCorrectionMask = $removedColorDepthBits !== 0 ? 1 << ($removedColorDepthBits - 1) : 0;
 
         $width = $this->width;
         $height = $this->height;
@@ -310,187 +410,92 @@ class PhpRenderer implements RendererInterface
                     continue;
                 }
 
-                $upperPxIndex = $i * $width + $j;
-                $lowerPxIndex = ($i + 1) * $width + $j;
+                $upperPxIndex = 0;
+                $lowerPxIndex = 0;
+                $upperColor = 0;
+                $lowerColor = 0;
 
-                $upperColor = $this->currentFrameBuffer[$upperPxIndex];
-                $lowerColor = $this->currentFrameBuffer[$lowerPxIndex];
+                for ($k = 0; $k < 2; $k++) {
+                    $pxIndex = ($i + $k) * $width + $j;
 
-                $persistedColor = $this->persistenceBuffer[$upperPxIndex];
-                $persistedColorA = ($persistedColor >> 24) & 0xff;
+                    $color = $this->currentFrameBuffer[$pxIndex];
+                    $persistedColor = $this->persistenceBuffer[$pxIndex];
 
-                if (!$persistenceEffectsEnabled && $persistedColorA > 0) {
-                    $this->persistenceBuffer[$upperPxIndex] = 0;
-                }
+                    $persistedColorA = ($persistedColor >> 24) & 0xff;
 
-                if ($persistenceEffectsEnabled && $persistedColorA > 0) {
-                    $persistedColorR = ($persistedColor >> 16) & 0xff;
-                    $persistedColorG = ($persistedColor >> 8) & 0xff;
-                    $persistedColorB = $persistedColor & 0xff;
-
-                    $colorR = ($upperColor >> 16) & 0xff;
-                    $colorG = ($upperColor >> 8) & 0xff;
-                    $colorB = $upperColor & 0xff;
-
-                    $colorR = (int) (
-                        $colorR * (1 - ($persistedColorA / 255.0))
-                        + $persistedColorR * ($persistedColorA / 255.0)
-                    );
-
-                    $colorG = (int) (
-                        $colorG * (1 - ($persistedColorA / 255.0))
-                        + $persistedColorG * ($persistedColorA / 255.0)
-                    );
-
-                    $colorB = (int) (
-                        $colorB * (1 - ($persistedColorA / 255.0))
-                        + $persistedColorB * ($persistedColorA / 255.0)
-                    );
-
-                    $upperColor =
-                        (255 << 24) |
-                        (($colorR & 0xff) << 16) |
-                        (($colorG & 0xff) << 8) |
-                        ($colorB & 0xff)
-                    ;
-
-                    $persistedColorA -= $persistenceAlphaDecrease;
-                    if ($persistedColorA < 0) {
-                        $persistedColorA = 0;
+                    if (!$persistenceEffectsEnabled && $persistedColorA > 0) {
+                        $this->persistenceBuffer[$pxIndex] = 0;
                     }
 
-                    $this->persistenceBuffer[$upperPxIndex] =
-                        (($persistedColorA & 0xff) << 24) |
-                        (($persistedColorR & 0xff) << 16) |
-                        (($persistedColorG & 0xff) << 8) |
-                        ($persistedColorB & 0xff)
-                    ;
+                    if ($persistenceEffectsEnabled && $persistedColorA > 0) {
+                        $persistedColorR = ($persistedColor >> 16) & 0xff;
+                        $persistedColorG = ($persistedColor >> 8) & 0xff;
+                        $persistedColorB = $persistedColor & 0xff;
 
-                    $this->currentFrameBuffer[$upperPxIndex] = $upperColor;
-                }
+                        $colorR = ($color >> 16) & 0xff;
+                        $colorG = ($color >> 8) & 0xff;
+                        $colorB = $color & 0xff;
 
-                $persistedColor = $this->persistenceBuffer[$lowerPxIndex];
-                $persistedColorA = ($persistedColor >> 24) & 0xff;
-
-                if (!$persistenceEffectsEnabled && $persistedColorA > 0) {
-                    $this->persistenceBuffer[$lowerPxIndex] = 0;
-                }
-
-                if ($persistenceEffectsEnabled && $persistedColorA > 0) {
-                    $persistedColorR = ($persistedColor >> 16) & 0xff;
-                    $persistedColorG = ($persistedColor >> 8) & 0xff;
-                    $persistedColorB = $persistedColor & 0xff;
-
-                    $colorR = ($lowerColor >> 16) & 0xff;
-                    $colorG = ($lowerColor >> 8) & 0xff;
-                    $colorB = $lowerColor & 0xff;
-
-                    $colorR = (int) (
-                        $colorR * (1 - ($persistedColorA / 255.0))
-                        + $persistedColorR * ($persistedColorA / 255.0)
-                    );
-
-                    $colorG = (int) (
-                        $colorG * (1 - ($persistedColorA / 255.0))
-                        + $persistedColorG * ($persistedColorA / 255.0)
-                    );
-
-                    $colorB = (int) (
-                        $colorB * (1 - ($persistedColorA / 255.0))
-                        + $persistedColorB * ($persistedColorA / 255.0)
-                    );
-
-                    $lowerColor =
-                        (255 << 24) |
-                        (($colorR & 0xff) << 16) |
-                        (($colorG & 0xff) << 8) |
-                        ($colorB & 0xff)
-                    ;
-
-                    $persistedColorA -= $persistenceAlphaDecrease;
-                    if ($persistedColorA < 0) {
-                        $persistedColorA = 0;
-                    }
-
-                    $this->persistenceBuffer[$lowerPxIndex] =
-                        (($persistedColorA & 0xff) << 24) |
-                        (($persistedColorR & 0xff) << 16) |
-                        (($persistedColorG & 0xff) << 8) |
-                        ($persistedColorB & 0xff)
-                    ;
-
-                    $this->currentFrameBuffer[$lowerPxIndex] = $lowerColor;
-                }
-
-                if ($colorReductionFactor > 1) {
-                    if (($upperColor & 0xffffff) !== 0) {
-                        $colorR = ($upperColor >> 16) & 0xff;
-                        $colorG = ($upperColor >> 8) & 0xff;
-                        $colorB = $upperColor & 0xff;
-
-                        $brightness = ($colorR + $colorG + $colorB) / (255.0 * 3);
+                        $persistedColorAlphaRatio = $persistedColorA * $fullBrightnessReciprocal;
 
                         $colorR = (int) (
-                            ($colorR / $colorReductionFactor + 0.95 + $brightness)
-                            ) * $colorReductionFactor
-                        ;
-                        $colorR = $colorR > 255 ? 255 : $colorR;
+                            $colorR * (1 - $persistedColorAlphaRatio)
+                            + $persistedColorR * $persistedColorAlphaRatio
+                        );
 
                         $colorG = (int) (
-                            ($colorG / $colorReductionFactor + 0.95 + $brightness)
-                            ) * $colorReductionFactor
-                        ;
-                        $colorG = $colorG > 255 ? 255 : $colorG;
+                            $colorG * (1 - $persistedColorAlphaRatio)
+                            + $persistedColorG * $persistedColorAlphaRatio
+                        );
 
                         $colorB = (int) (
-                            ($colorB / $colorReductionFactor + 0.95 + $brightness)
-                            ) * $colorReductionFactor
-                        ;
-                        $colorB = $colorB > 255 ? 255 : $colorB;
+                            $colorB * (1 - $persistedColorAlphaRatio)
+                            + $persistedColorB * $persistedColorAlphaRatio
+                        );
 
-                        $upperColor =
+                        $color =
                             (255 << 24) |
                             (($colorR & 0xff) << 16) |
                             (($colorG & 0xff) << 8) |
                             ($colorB & 0xff)
                         ;
 
-                        $this->currentFrameBuffer[$upperPxIndex] = $upperColor;
+                        $persistedColorA -= $persistenceAlphaDecrease;
+                        if ($persistedColorA < 0) {
+                            $persistedColorA = 0;
+                        }
+
+                        $this->persistenceBuffer[$pxIndex] =
+                            (($persistedColorA & 0xff) << 24) |
+                            (($persistedColorR & 0xff) << 16) |
+                            (($persistedColorG & 0xff) << 8) |
+                            ($persistedColorB & 0xff)
+                        ;
+
+                        $this->currentFrameBuffer[$pxIndex] = $color;
                     }
 
-                    if (($lowerColor & 0xffffff) !== 0) {
-                        $colorR = ($lowerColor >> 16) & 0xff;
-                        $colorG = ($lowerColor >> 8) & 0xff;
-                        $colorB = $lowerColor & 0xff;
+                    if ($removedColorDepthBits !== 0 && ($color & 0xffffff) !== 0) {
+                        $colorR = ($color >> 16) & 0xff;
+                        $colorG = ($color >> 8) & 0xff;
+                        $colorB = $color & 0xff;
 
-                        $brightness = ($colorR + $colorG + $colorB) / (255.0 * 3);
-
-                        $colorR = (int) (
-                                ($colorR / $colorReductionFactor + 0.95 + $brightness)
-                            ) * $colorReductionFactor
-                        ;
-                        $colorR = $colorR > 255 ? 255 : $colorR;
-
-                        $colorG = (int) (
-                            ($colorG / $colorReductionFactor + 0.95 + $brightness)
-                            ) * $colorReductionFactor
-                        ;
-                        $colorG = $colorG > 255 ? 255 : $colorG;
-
-                        $colorB = (int) (
-                            ($colorB / $colorReductionFactor + 0.95 + $brightness)
-                            ) * $colorReductionFactor
-                        ;
-                        $colorB = $colorB > 255 ? 255 : $colorB;
-
-                        $lowerColor =
+                        $color =
                             (255 << 24) |
-                            (($colorR & 0xff) << 16) |
-                            (($colorG & 0xff) << 8) |
-                            ($colorB & 0xff)
+                            (((($colorR >> $removedColorDepthBits) << $removedColorDepthBits) | $colorReductionCorrectionMask) << 16) |
+                            (((($colorG >> $removedColorDepthBits) << $removedColorDepthBits) | $colorReductionCorrectionMask) << 8) |
+                            ((($colorB >> $removedColorDepthBits) << $removedColorDepthBits) | $colorReductionCorrectionMask)
                         ;
 
-                        $this->currentFrameBuffer[$lowerPxIndex] = $lowerColor;
+                        $this->currentFrameBuffer[$pxIndex] = $color;
+                    }
+
+                    if ($k === 0) {
+                        $upperPxIndex = $pxIndex;
+                        $upperColor = $color;
+                    } else {
+                        $lowerPxIndex = $pxIndex;
+                        $lowerColor = $color;
                     }
                 }
 
@@ -535,13 +540,46 @@ class PhpRenderer implements RendererInterface
                 }
 
                 if ($lastUpperColor !== $upperColor || $lastLowerColor !== $lowerColor) {
-                    $ansiFgColor = '38;2;' . (($upperColor >> 16) & 0xff) . ';' . (($upperColor >> 8) & 0xff) . ';' . ($upperColor & 0xff);
-                    $ansiBgColor = '48;2;' . (($lowerColor >> 16) & 0xff) . ';' . (($lowerColor >> 8) & 0xff) . ';' . ($lowerColor & 0xff);
+                    if ($trueColorModeEnabled) {
+                        echo
+                            "\033",
+                            '[38;2;',
+                            (($upperColor >> 16) & 0xff), ';', (($upperColor >> 8) & 0xff), ';', ($upperColor & 0xff),
+                            ';48;2;',
+                            (($lowerColor >> 16) & 0xff), ';', (($lowerColor >> 8) & 0xff), ';', ($lowerColor & 0xff),
+                            'm'
+                        ;
 
-                    echo "\033", '[', $ansiFgColor, ';', $ansiBgColor, 'm';
+                        $lastUpperColor = $upperColor;
+                        $lastLowerColor = $lowerColor;
+                    } else {
+                        $brightnessBoost = 0.3;
 
-                    $lastUpperColor = $upperColor;
-                    $lastLowerColor = $lowerColor;
+                        $upperColorTableIdx = 16 +
+                            + 36 * (int) round($brightnessBoost + 5 * (($upperColor >> 16) & 0xff) * $fullBrightnessReciprocal)
+                            + 6 * (int) round($brightnessBoost + 5 * (($upperColor >> 8) & 0xff) * $fullBrightnessReciprocal)
+                            + (int) round($brightnessBoost + 5 * (($upperColor >> 0) & 0xff) * $fullBrightnessReciprocal)
+                        ;
+
+                        if ($upperColorTableIdx > 231) {
+                            $upperColorTableIdx = 231;
+                        }
+
+                        $lowerColorTableIdx = 16
+                            + 36 * (int) round($brightnessBoost + 5 * (($lowerColor >> 16) & 0xff) * $fullBrightnessReciprocal)
+                            + 6 * (int) round($brightnessBoost + 5 * (($lowerColor >> 8) & 0xff) * $fullBrightnessReciprocal)
+                            + (int) round($brightnessBoost + 5 * (($lowerColor >> 0) & 0xff) * $fullBrightnessReciprocal)
+                        ;
+
+                        if ($lowerColorTableIdx > 231) {
+                            $lowerColorTableIdx = 231;
+                        }
+
+                        echo "\033", '[38;5;', $upperColorTableIdx, ';48;5;', $lowerColorTableIdx, 'm';
+
+                        $lastUpperColor = $upperColorTableIdx;
+                        $lastLowerColor = $lowerColorTableIdx;
+                    }
                 }
 
                 echo '▀';
@@ -554,8 +592,14 @@ class PhpRenderer implements RendererInterface
 
                     $lastPxCol = $j + 1;
                 }
+
+                if ($updatedCharacterCount % 300 === 0) {
+                    ob_flush();
+                }
             }
         }
+
+        ob_flush();
 
         $this->previousFrameBuffer = $this->currentFrameBuffer;
 

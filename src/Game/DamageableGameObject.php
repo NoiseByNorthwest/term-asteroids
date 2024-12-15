@@ -7,50 +7,76 @@ use NoiseByNorthwest\TermAsteroids\Engine\GameObject;
 use NoiseByNorthwest\TermAsteroids\Engine\Math;
 use NoiseByNorthwest\TermAsteroids\Engine\Sprite;
 use NoiseByNorthwest\TermAsteroids\Engine\SpriteEffect;
+use NoiseByNorthwest\TermAsteroids\Engine\SpriteEffectHelper;
 use NoiseByNorthwest\TermAsteroids\Engine\SpriteRenderingParameters;
+use NoiseByNorthwest\TermAsteroids\Engine\Timer;
+use NoiseByNorthwest\TermAsteroids\Game\Asteroid\HugeAsteroid;
 
 abstract class DamageableGameObject extends GameObject
 {
     private int $health;
 
+    private float $lastInvulnerabilityPeriodStartTime = 0;
+
+    private ?float $destructionTime = null;
+
+    private float $destructionPhaseDuration = 0.0;
+
     abstract public static function getMaxHealth(): int;
 
-    public function __construct(Sprite $sprite, callable $acceleratorFactory, ?callable $nextMoveDirResolver = null)
+    public function __construct(Sprite $sprite, array $movers = [])
     {
-        foreach (
-            [
-                [
-                    'key' => 'hit',
-                    'color' => '#ff0000',
-                    'alphaRatio' => fn () => (1 - $this->health / static::getMaxHealth()),
-                ],
-                [
-                    'key' => 'repair',
-                    'color' => '#00ff00',
-                    'alphaRatio' => fn () => $this->health / static::getMaxHealth(),
-                ],
-            ] as $effectData
-        ) {
-            $sprite->addEffect(
-                new SpriteEffect(
-                    function (SpriteRenderingParameters $renderingParameters, float $age) use($effectData) {
-                        $renderingParameters->setBlendingColor(
-                            ColorUtils::createColor(
-                                $effectData['color'],
-                                (int)(
-                                    255 * $effectData['alphaRatio']() * abs(sin($age * 30))
-                                )
+        $sprite->addEffect(
+            new SpriteEffect(
+                function (SpriteRenderingParameters $renderingParameters, float $age) {
+                    $damageRatio = 1 - $this->health / static::getMaxHealth();
+                    $renderingParameters->setGlobalBlendingColor(
+                        ColorUtils::createColor(
+                            '#ff0000',
+                            (int)(
+                                255 * ((0.5 * $damageRatio) + (0.5 * $damageRatio * abs(sin($age * 10))))
                             )
-                        );
-                    },
-                    autoStart: false,
-                    key: $effectData['key'],
-                    duration: 0.5,
-                )
-            );
-        }
+                        )
+                    );
 
-        parent::__construct($sprite, $acceleratorFactory, $nextMoveDirResolver);
+                    $height = $this->getSprite()->getHeight();
+                    $renderingParameters->setHorizontalDistortionOffsets(
+                        SpriteEffectHelper::generateHorizontalDistortionOffsets(
+                            height: $height,
+                            maxAmplitude: $height * $damageRatio * 0.13,
+                            timeFactor: 5,
+                            shearFactor: 2 * ($height / HugeAsteroid::getSize())
+                        )
+                    );
+                },
+            )
+        );
+
+        $sprite->addEffect(
+            new SpriteEffect(
+                function (SpriteRenderingParameters $renderingParameters, float $age) {
+                    $healthRatio = $this->health / static::getMaxHealth();
+                    $renderingParameters->setGlobalBlendingColor(
+                        ColorUtils::createColor(
+                            '#00ff00',
+                            (int)(
+                                255 * $healthRatio * abs(sin($age * 30))
+                            )
+                        )
+                    );
+                },
+                autoStart: false,
+                key: 'repair',
+                duration: 1,
+            )
+        );
+
+        parent::__construct($sprite, movers: $movers);
+    }
+
+    protected function setHealth(int $health): void
+    {
+        $this->health = Math::bound($health, 0, static::getMaxHealth());
     }
 
     /**
@@ -61,16 +87,56 @@ abstract class DamageableGameObject extends GameObject
         return $this->health;
     }
 
-    protected function setInitialized(): void
+    public function getDestructionTime(): ?float
+    {
+        return $this->destructionTime;
+    }
+
+    public function getDestructionPhaseDuration(): float
+    {
+        return $this->destructionPhaseDuration;
+    }
+
+    public function getDestructionPhaseCompletionRatio(): float
+    {
+        if ($this->destructionTime === null) {
+            return 0;
+        }
+
+        if ($this->destructionPhaseDuration === 0.0) {
+            return 0;
+        }
+
+        return Math::bound((Timer::getCurrentGameTime() - $this->destructionTime) / $this->destructionPhaseDuration);
+    }
+
+    protected function damageableObjectInit(float $destructionPhaseDuration = 0.0): void
     {
         $this->health = static::getMaxHealth();
+        $this->lastInvulnerabilityPeriodStartTime = Timer::getCurrentGameTime();
+        $this->destructionTime = null;
+        $this->destructionPhaseDuration = $destructionPhaseDuration;
 
-        parent::setInitialized();
+        $this->setInitialized();
     }
 
     protected function doUpdate(): void
     {
-        foreach ($this->getOtherGameObjects() as $otherGameObject) {
+        if (
+            $this->destructionTime !== null
+                && Timer::getCurrentGameTime() - $this->destructionTime > $this->destructionPhaseDuration
+        ) {
+            $this->onDestructionPhaseEnd();
+            $this->setTerminated();
+
+            return;
+        }
+
+        foreach ($this->getGame()->getGameObjects() as $otherGameObject) {
+            if ($this === $otherGameObject) {
+                continue;
+            }
+
             if (
                 ! $otherGameObject instanceof DamageableGameObject
                 // in order to not process twice this pair
@@ -79,7 +145,9 @@ abstract class DamageableGameObject extends GameObject
                 continue;
             }
 
-            if (!$this->canDamage($otherGameObject)) {
+            if (
+                ! $this->canCollide($otherGameObject)
+                    || ! $otherGameObject->canCollide($this)) {
                 continue;
             }
 
@@ -89,11 +157,9 @@ abstract class DamageableGameObject extends GameObject
                 continue;
             }
 
-            $thisEnergy = $this->getHealth();
-            $otherEnergy = $otherGameObject->getHealth();
-
-            $this->hit($otherEnergy);
-            $otherGameObject->hit($thisEnergy);
+            $currentHealth = $this->getHealth();
+            $this->onCollision($otherGameObject, $otherGameObject->getHealth());
+            $otherGameObject->onCollision($this, $currentHealth);
 
             if ($this->isTerminated()) {
                 break;
@@ -103,15 +169,17 @@ abstract class DamageableGameObject extends GameObject
 
     public function hit(int $damage): void
     {
-        $this->health = Math::bound($this->health - $damage, 0, static::getMaxHealth());
+        $this->setHealth($this->health - $damage);
 
-        $this->getSprite()->startEffect('hit');
-        $this->onHit();
+        if ($this->destructionTime === null && $this->health === 0) {
+            $this->destructionTime = Timer::getCurrentGameTime();
 
-        if ($this->health === 0) {
-            $this->setTerminated();
+            $this->onDestructionPhaseStart();
 
-            $this->onDestruction();
+            if ($this->destructionPhaseDuration === 0.0) {
+                $this->onDestructionPhaseEnd();
+                $this->setTerminated();
+            }
         }
     }
 
@@ -123,18 +191,31 @@ abstract class DamageableGameObject extends GameObject
         $this->onRepair();
     }
 
-    protected function canDamage(DamageableGameObject $otherGameObject): bool
+    protected function canCollide(DamageableGameObject $otherGameObject): bool
     {
+        if ($this->destructionTime !== null) {
+            return false;
+        }
+
+        if (Timer::getCurrentGameTime() - $this->lastInvulnerabilityPeriodStartTime < 0.05) {
+            return false;
+        }
+
         return true;
     }
 
-    abstract protected function onDestruction(): void;
-
-    protected function onHit(): void
+    protected function onCollision(DamageableGameObject $other, int $otherHealthBeforeCollision): void
     {
+        $this->lastInvulnerabilityPeriodStartTime = Timer::getCurrentGameTime();
     }
 
     protected function onRepair(): void
     {
     }
+
+    protected function onDestructionPhaseStart(): void
+    {
+    }
+
+    abstract protected function onDestructionPhaseEnd(): void;
 }

@@ -8,11 +8,15 @@ class SpriteRenderingParameters
 
     private float $brightness = 1;
 
-    private ?int $blendingColor = null;
+    private ?int $globalBlendingColor = null;
+
+    private array $verticalBlendingColors = [];
 
     private bool $persisted = false;
 
     private ?int $persistedColor = null;
+
+    private array $horizontalDistortionOffsets = [];
 
     private array $horizontalBackgroundDistortionOffsets = [];
 
@@ -20,9 +24,11 @@ class SpriteRenderingParameters
     {
         $this->globalAlpha = 255;
         $this->brightness = 1;
-        $this->blendingColor = null;
+        $this->globalBlendingColor = null;
+        $this->verticalBlendingColors = [];
         $this->persisted = false;
         $this->persistedColor = null;
+        $this->horizontalDistortionOffsets = [];
         $this->horizontalBackgroundDistortionOffsets = [];
     }
 
@@ -65,17 +71,27 @@ class SpriteRenderingParameters
     /**
      * @return int|null
      */
-    public function getBlendingColor(): ?int
+    public function getGlobalBlendingColor(): ?int
     {
-        return $this->blendingColor;
+        return $this->globalBlendingColor;
     }
 
     /**
-     * @param int|null $blendingColor
+     * @param int|null $globalBlendingColor
      */
-    public function setBlendingColor(?int $blendingColor): void
+    public function setGlobalBlendingColor(?int $globalBlendingColor): void
     {
-        $this->blendingColor = $blendingColor;
+        $this->globalBlendingColor = $globalBlendingColor;
+    }
+
+    public function getVerticalBlendingColors(): array
+    {
+        return $this->verticalBlendingColors;
+    }
+
+    public function setVerticalBlendingColors(array $verticalBlendingColors): void
+    {
+        $this->verticalBlendingColors = $verticalBlendingColors;
     }
 
     /**
@@ -108,6 +124,16 @@ class SpriteRenderingParameters
     public function setPersistedColor(?int $persistedColor): void
     {
         $this->persistedColor = $persistedColor;
+    }
+
+    public function getHorizontalDistortionOffsets(): array
+    {
+        return $this->horizontalDistortionOffsets;
+    }
+
+    public function setHorizontalDistortionOffsets(array $horizontalDistortionOffsets): void
+    {
+        $this->horizontalDistortionOffsets = $horizontalDistortionOffsets;
     }
 
     public function getHorizontalBackgroundDistortionOffsets(): array
