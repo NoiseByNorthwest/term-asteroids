@@ -8,7 +8,7 @@ class MediumFlame extends Flame
 {
     public static function getMaxAcquiredCount(): ?int
     {
-        return 20;
+        return 30;
     }
 
     public static function getSize(): int

@@ -19,7 +19,7 @@ class GameObjectPool
     /**
      * @var array<string, int>
      */
-    private array $excludedGameObjectCount = [];
+    private array $excludedGameObjectCounts = [];
 
     /**
      * @param Game $game
@@ -35,7 +35,7 @@ class GameObjectPool
     {
         $this->acquiredGameObjects = [];
         $this->releasedGameObjects = [];
-        $this->excludedGameObjectCount = [];
+        $this->excludedGameObjectCounts = [];
     }
 
     /**
@@ -49,20 +49,42 @@ class GameObjectPool
     /**
      * @template T
      * @param class-string<T> $className
+     * @param Vec2 $pos
+     * @param callable $initializer
+     * @param bool $withLimit
+     * @param bool $withAdaptivePerformanceLimit
      * @return T|null
      */
-    public function acquire(string $className, bool $withLimit = false)
-    {
+    public function acquire(
+        string $className,
+        Vec2 $pos,
+        callable $initializer,
+        bool $withLimit = false,
+        bool $withAdaptivePerformanceLimit = true
+    ) {
         $this->initClassTracking($className);
 
         assert(is_subclass_of($className, GameObject::class));
 
         if (
             $withLimit &&
-            $className::getMaxAcquiredCount() !== null &&
-            count($this->acquiredGameObjects[$className]) >= $className::getMaxAcquiredCount()
+            (
+                (
+                    $className::getMaxAcquiredCount() !== null &&
+                    count($this->acquiredGameObjects[$className]) >= Math::roundToInt(
+                        $className::getMaxAcquiredCount() * (
+                            $withAdaptivePerformanceLimit ?
+                                $this->getGame()->getAdaptivePerformanceManager()->getAllowedResourceConsumptionRatio()
+                                : 1
+                        )
+                    )
+                ) || $className::shouldBeExcluded(
+                    $pos,
+                    $this->getGame()->getAdaptivePerformanceManager()->getAllowedResourceConsumptionRatio()
+                )
+            )
         ) {
-            $this->excludedGameObjectCount[$className]++;
+            $this->excludedGameObjectCounts[$className]++;
 
             return null;
         }
@@ -78,16 +100,12 @@ class GameObjectPool
             assert($gameObject instanceof GameObject);
             assert($gameObject->isTerminated());
             assert(!$this->isAcquired($gameObject));
-            $gameObject->reset();
-            $this->acquiredGameObjects[$className][$gameObject->getId()] = $gameObject;
-
-            return $gameObject;
+        } else {
+            $gameObject = new $className();
+            $gameObject->setPool($this);
         }
 
-        $gameObject = new $className();
-        $gameObject->setPool($this);
-        assert(!$this->isAcquired($gameObject));
-        assert(!$this->isReleased($gameObject));
+        $gameObject->reset($pos, $initializer);
         $this->acquiredGameObjects[$className][$gameObject->getId()] = $gameObject;
 
         return $gameObject;
@@ -125,30 +143,56 @@ class GameObjectPool
 
     public function getAcquiredGameObjectCount(): int
     {
-        return array_sum(
-            array_map(
-                fn (array $e) => count($e),
-                $this->acquiredGameObjects
-            )
-        );
+        $sum = 0;
+        foreach ($this->acquiredGameObjects as $acquiredGameObjects) {
+            $sum += count($acquiredGameObjects);
+        }
+
+        return $sum;
     }
 
     public function getReleasedGameObjectCount(): int
     {
-        return array_sum(
-            array_map(
-                fn (array $e) => count($e),
-                $this->releasedGameObjects
-            )
-        );
+        $sum = 0;
+        foreach ($this->releasedGameObjects as $releasedGameObjects) {
+            $sum += count($releasedGameObjects);
+        }
+
+        return $sum;
+    }
+
+    public function getStats(): array
+    {
+        $total = [];
+
+        foreach ($this->acquiredGameObjects as $k => $objects) {
+            $total[$k] = ($total[$k] ?? 0) + count($objects);
+        }
+
+        foreach ($this->releasedGameObjects as $k => $objects) {
+            $total[$k] = ($total[$k] ?? 0) + count($objects);
+        }
+
+        asort($total);
+
+        return [
+            'total' => $total,
+            'acquired' => array_map(fn (array $e) => count($e), $this->acquiredGameObjects),
+            'released' => array_map(fn (array $e) => count($e), $this->releasedGameObjects),
+        ];
+    }
+
+    public function resetExcludedGameObjectCounts(): void
+    {
+        $this->excludedGameObjectCounts = [];
     }
 
     /**
      * @return array
      */
-    public function getExcludedGameObjectCount(): array
+    public function getExcludedGameObjectCounts(): array
     {
-        return $this->excludedGameObjectCount;
+        return $this->excludedGameObjectCounts;
     }
 
     private function initClassTracking(string $className): void
@@ -163,8 +207,8 @@ class GameObjectPool
             $this->acquiredGameObjects[$className] = [];
         }
 
-        if (! isset($this->excludedGameObjectCount[$className])) {
-            $this->excludedGameObjectCount[$className] = 0;
+        if (! isset($this->excludedGameObjectCounts[$className])) {
+            $this->excludedGameObjectCounts[$className] = 0;
         }
     }
 }

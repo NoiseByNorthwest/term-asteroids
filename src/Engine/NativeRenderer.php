@@ -6,43 +6,64 @@ class NativeRenderer implements RendererInterface
 {
     const BITMAP_DIMENSION_MAX_SIZE = 256;
 
-    private \FFI $ffi;
-
     private object $nativeRendererFfi;
+
+    private object $verticalBlendingColorsFfiBuffer;
+
+    private object $horizontalDistortionOffsetsFfiBuffer;
 
     private object $horizontalBackgroundDistortionOffsetsFfiBuffer;
 
+    private static ?\FFI $ffi = null;
+
+    public static function getFfi(): \FFI
+    {
+        if (self::$ffi === null) {
+            $sharedObjectDirName = realpath(__DIR__ . '/../../.tmp');
+            assert($sharedObjectDirName !== false);
+
+            $includePathFlags = [
+                '-I/usr/local/include/php',
+                '-I/usr/local/include/php/main',
+                '-I/usr/local/include/php/TSRM',
+                '-I/usr/local/include/php/Zend',
+                '-I/usr/local/include/php/ext',
+                '-I/usr/local/include/php/ext/date/lib',
+            ];
+
+            $sharedObjectFileName = $sharedObjectDirName . '/NativeRenderer.so';
+            shell_exec('rm -rf ' . $sharedObjectFileName);
+            shell_exec(sprintf(
+                'gcc -O3 -march=native -ffast-math -Werror -Wall %s -shared -fPIC -o %s %s',
+                implode(' ', $includePathFlags),
+                $sharedObjectFileName,
+                __DIR__ . '/NativeRenderer.c',
+            ));
+
+            self::$ffi = \FFI::cdef(
+                file_get_contents(__DIR__ . '/NativeRenderer.h'),
+                $sharedObjectFileName
+            );
+        }
+
+        return self::$ffi;
+    }
+
     public function __construct(int $width, int $height)
     {
-        $sharedObjectDirName = realpath(__DIR__ . '/../../.tmp');
-        assert($sharedObjectDirName !== false);
+        $this->nativeRendererFfi = self::getFfi()->NativeRenderer_create($width, $height);
 
-        $includePathFlags = [
-            '-I/usr/local/include/php',
-            '-I/usr/local/include/php/main',
-            '-I/usr/local/include/php/TSRM',
-            '-I/usr/local/include/php/Zend',
-            '-I/usr/local/include/php/ext',
-            '-I/usr/local/include/php/ext/date/lib',
-        ];
-
-        $sharedObjectFileName = $sharedObjectDirName . '/NativeRenderer.so';
-        shell_exec('rm -rf ' . $sharedObjectFileName);
-        shell_exec(sprintf(
-            'gcc -O3 -msse2 -mfpmath=sse -march=native -Werror -Wall %s -shared -fPIC -o %s %s',
-            implode(' ', $includePathFlags),
-            $sharedObjectFileName,
-            __DIR__ . '/NativeRenderer.c',
+        $this->verticalBlendingColorsFfiBuffer = self::getFfi()->new(sprintf(
+            'int64_t[%d]',
+            self::BITMAP_DIMENSION_MAX_SIZE
         ));
 
-        $this->ffi = \FFI::cdef(
-            file_get_contents(__DIR__ . '/NativeRenderer.h'),
-            $sharedObjectFileName
-        );
+        $this->horizontalDistortionOffsetsFfiBuffer = self::getFfi()->new(sprintf(
+            'int64_t[%d]',
+            self::BITMAP_DIMENSION_MAX_SIZE
+        ));
 
-        $this->nativeRendererFfi = $this->ffi->NativeRenderer_create($width, $height);
-
-        $this->horizontalBackgroundDistortionOffsetsFfiBuffer = \FFI::new(sprintf(
+        $this->horizontalBackgroundDistortionOffsetsFfiBuffer = self::getFfi()->new(sprintf(
             'int64_t[%d]',
             self::BITMAP_DIMENSION_MAX_SIZE
         ));
@@ -50,17 +71,17 @@ class NativeRenderer implements RendererInterface
 
     public function __destruct()
     {
-        $this->ffi->NativeRenderer_destroy($this->nativeRendererFfi);
+        self::getFfi()->NativeRenderer_destroy($this->nativeRendererFfi);
     }
 
     public function reset(): void
     {
-        $this->ffi->NativeRenderer_reset($this->nativeRendererFfi);
+        self::getFfi()->NativeRenderer_reset($this->nativeRendererFfi);
     }
 
     public function clear(int $color): void
     {
-        $this->ffi->NativeRenderer_clear($this->nativeRendererFfi, $color);
+        self::getFfi()->NativeRenderer_clear($this->nativeRendererFfi, $color);
     }
 
     public function drawBitmap(
@@ -69,10 +90,13 @@ class NativeRenderer implements RendererInterface
         int    $y,
         int    $globalAlpha = 255,
         float  $brightness = 1,
-        ?int   $blendingColor = null,
+        ?int   $globalBlendingColor = null,
+        array  $verticalBlendingColors = [],
         bool   $persisted = false,
         ?int   $globalPersistedColor = null,
+        array  $horizontalDistortionOffsets = [],
         array  $horizontalBackgroundDistortionOffsets = [],
+        float  $ditheringAlphaRatioThreshold = 0,
     ): void {
         $bitmapWidth = $bitmap->getWidth();
         $bitmapHeight = $bitmap->getHeight();
@@ -89,11 +113,16 @@ class NativeRenderer implements RendererInterface
             ));
         }
 
+        for ($i = 0; $i < $bitmapWidth; $i++) {
+            $this->verticalBlendingColorsFfiBuffer[$i] = $verticalBlendingColors[$i] ?? -1;
+        }
+
         for ($i = 0; $i < $bitmapHeight; $i++) {
+            $this->horizontalDistortionOffsetsFfiBuffer[$i] = $horizontalDistortionOffsets[$i] ?? 0;
             $this->horizontalBackgroundDistortionOffsetsFfiBuffer[$i] = $horizontalBackgroundDistortionOffsets[$i] ?? 0;
         }
 
-        $this->ffi->NativeRenderer_drawBitmap(
+        self::getFfi()->NativeRenderer_drawBitmap(
             $this->nativeRendererFfi,
             $bitmapNativePixels,
             $bitmapWidth,
@@ -102,16 +131,19 @@ class NativeRenderer implements RendererInterface
             $y,
             $globalAlpha,
             $brightness,
-            $blendingColor !== null ? $blendingColor : -1,
+            $globalBlendingColor !== null ? $globalBlendingColor : -1,
+            $this->verticalBlendingColorsFfiBuffer,
             $persisted ? 1 : 0,
             $globalPersistedColor !== null ? $globalPersistedColor : -1,
+            $this->horizontalDistortionOffsetsFfiBuffer,
             $this->horizontalBackgroundDistortionOffsetsFfiBuffer,
+            $ditheringAlphaRatioThreshold
         );
     }
 
     public function drawRect(AABox $rect, int $color): void
     {
-        $this->ffi->NativeRenderer_drawRect(
+        self::getFfi()->NativeRenderer_drawRect(
             $this->nativeRendererFfi,
             (int) $rect->getSize()->getWidth(),
             (int) $rect->getSize()->getHeight(),
@@ -121,19 +153,28 @@ class NativeRenderer implements RendererInterface
         );
     }
 
+    public function getDrawnBitmapPixelCount(): int
+    {
+        return self::getFfi()->NativeRenderer_getDrawnBitmapPixelCount(
+            $this->nativeRendererFfi,
+        );
+    }
+
     function update(
+        bool $trueColorModeEnabled,
         bool $persistenceEffectsEnabled,
         int $persistenceAlphaDecrease,
-        int $colorReductionFactor,
+        int $removedColorDepthBits,
         int $lowResolutionMode,
     ): int {
         // $lowResolutionMode is not implemented yet
 
-        return $this->ffi->NativeRenderer_update(
+        return self::getFfi()->NativeRenderer_update(
             $this->nativeRendererFfi,
+            $trueColorModeEnabled ? 1 : 0,
             $persistenceEffectsEnabled ? 1 : 0,
             $persistenceAlphaDecrease,
-            $colorReductionFactor,
+            $removedColorDepthBits,
         );
     }
 }

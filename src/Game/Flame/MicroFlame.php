@@ -2,22 +2,22 @@
 
 namespace NoiseByNorthwest\TermAsteroids\Game\Flame;
 
-use NoiseByNorthwest\TermAsteroids\Game\Smoke\SmallSmoke;
+use NoiseByNorthwest\TermAsteroids\Game\Smoke\MicroSmoke;
 
-class SmallFlame extends Flame
+class MicroFlame extends Flame
 {
     public static function getMaxAcquiredCount(): ?int
     {
-        return 50;
+        return 30;
     }
 
     public static function getSize(): int
     {
-        return 25;
+        return 8;
     }
 
     public static function getSmokeClassName(): string
     {
-        return SmallSmoke::class;
+        return MicroSmoke::class;
     }
 }

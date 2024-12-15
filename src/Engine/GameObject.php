@@ -12,9 +12,16 @@ abstract class GameObject
 
     private Sprite $sprite;
 
-    private ?array $hitBoxes = null;
+    private array $hitBoxes = [];
 
-    private MomentumBasedMover $mover;
+    /**
+     * @var array<Mover>
+     */
+    private array $movers;
+
+    private Vec2 $currentDisplacementDir;
+
+    private float $currentDisplacementVelocity;
 
     private int $zIndex;
 
@@ -40,34 +47,48 @@ abstract class GameObject
         return null;
     }
 
+    public static function shouldBeExcluded(Vec2 $pos, float $allowedResourceConsumptionRatio): bool
+    {
+        return false;
+    }
+
     public function __construct(
         Sprite $sprite,
-        callable $acceleratorFactory,
-        ?callable $nextMoveDirResolver = null,
+        array $movers = [],
         int $zIndex = 0
     ) {
         $this->sprite = $sprite;
-        $this->mover = new MomentumBasedMover(
-            $this->sprite->getPos(),
-            $acceleratorFactory,
-            $nextMoveDirResolver
-        );
-
+        $this->movers = $movers;
+        $this->currentDisplacementDir = new Vec2();
+        $this->currentDisplacementVelocity = 0;
         $this->zIndex = $zIndex;
-
-        $this->reset();
     }
 
-    public function reset(): void
+    public function reset(Vec2 $pos, ?callable $initializer = null): void
     {
         $this->id = ++self::$idSeq;
         $this->sprite->reset();
-        $this->mover->reset();
-        $this->creationTime = Timer::getCurrentFrameStartTime();
+
+        foreach ($this->movers as $mover) {
+            $mover->reset();
+        }
+
+        $this->currentDisplacementDir->set(0, 0);
+        $this->currentDisplacementVelocity = 0;
+
+        $this->creationTime = Timer::getCurrentGameTime();
         $this->initialized = false;
         $this->active = true;
         $this->terminated = false;
         $this->terminationTime = null;
+
+        $this->getPos()->setVec($pos);
+        $this->sprite->updateBoundingBox();
+        $this->updateHitBoxes();
+
+        if ($initializer !== null) {
+            $initializer($this);
+        }
     }
 
     /**
@@ -100,20 +121,6 @@ abstract class GameObject
         return $this->pool->getGame();
     }
 
-    public function getOtherGameObjects(): array
-    {
-        $otherGameObjects = [];
-        foreach ($this->getGame()->getGameObjects() as $gameObject) {
-            if ($gameObject->id === $this->id) {
-                continue;
-            }
-
-            $otherGameObjects[] = $gameObject;
-        }
-
-        return $otherGameObjects;
-    }
-
     public function getScreen(): Screen
     {
         return $this->getGame()->getScreen();
@@ -138,10 +145,26 @@ abstract class GameObject
     }
 
     /**
+     * @return AABox[]
+     */
+    protected function resolveHitBoxes(): array
+    {
+        return [
+            $this->getBoundingBox(),
+        ];
+    }
+
+    protected function updateHitBoxes(): void
+    {
+        $this->hitBoxes = $this->resolveHitBoxes();
+    }
+
+    /**
+     * @deprecated
      * @param AABox[] $hitBoxes
      * @return void
      */
-    protected function setHitBoxes(array $hitBoxes)
+    protected function setHitBoxes(array $hitBoxes): void
     {
         $this->hitBoxes = $hitBoxes;
     }
@@ -151,12 +174,6 @@ abstract class GameObject
      */
     public function getHitBoxes(): array
     {
-        if ($this->hitBoxes === null) {
-            $this->hitBoxes = [
-                $this->getBoundingBox(),
-            ];
-        }
-
         return $this->hitBoxes;
     }
 
@@ -167,7 +184,7 @@ abstract class GameObject
 
     public function resolveFirstCollidingHitBox(GameObject $other): ?AABox
     {
-        if (! $this->getBoundingBox()->intersectWith($other->getBoundingBox())) {
+        if (! $this->sprite->getBoundingBox()->intersectWith($other->sprite->getBoundingBox())) {
             return null;
         }
 
@@ -182,9 +199,35 @@ abstract class GameObject
         return null;
     }
 
-    public function getMover(): MomentumBasedMover
+    public function getMovers(): array
     {
-        return $this->mover;
+        return $this->movers;
+    }
+
+    public function getSingleMover(): Mover
+    {
+        assert(count($this->movers) === 1);
+
+        return $this->movers[0];
+    }
+
+    /**
+     * @param array<Mover> $movers
+     * @return void
+     */
+    public function setMovers(array $movers): void
+    {
+        $this->movers = $movers;
+    }
+
+    public function getCurrentDisplacementDir(): Vec2
+    {
+        return $this->currentDisplacementDir;
+    }
+
+    public function getCurrentDisplacementVelocity(): float
+    {
+        return $this->currentDisplacementVelocity;
     }
 
     /**
@@ -219,7 +262,7 @@ abstract class GameObject
             || (
                 ! $this->enteredScreen
                     && $this->isOffScreen()
-                    && (Timer::getCurrentFrameStartTime() -  $this->creationTime) > 5
+                    && (Timer::getCurrentGameTime() -  $this->creationTime) > 5
             )
         ) {
             $this->setTerminated();
@@ -228,11 +271,25 @@ abstract class GameObject
         }
 
         $this->getSprite()->update();
-        $this->getMover()->updatePos();
+
+        $displacementVector = new Vec2();
+        foreach ($this->movers as $mover) {
+            $displacementVector->addVec($mover->getMoveVectorSinceLastStep());
+        }
+
+        $this->currentDisplacementDir = $displacementVector->copy()->normalize();
+        $this->currentDisplacementVelocity = $displacementVector->computeLength() / max(0.00001, Timer::getPreviousFrameTime());
+
+        $this->sprite->getPos()->addVec($displacementVector);
+
+        $this->afterPosUpdate();
+
+        $this->sprite->updateBoundingBox();
+        $this->updateHitBoxes();
 
         if (
             ! $this->enteredScreen &&
-            $this->getBoundingBox()->intersectWith($this->getScreen()->getRect())
+            ! $this->isOffScreen()
         ) {
             $this->enteredScreen = true;
         }
@@ -240,6 +297,9 @@ abstract class GameObject
         $this->doUpdate();
     }
 
+    protected function afterPosUpdate(): void
+    {
+    }
 
     protected function doUpdate(): void
     {
@@ -255,7 +315,7 @@ abstract class GameObject
 
         $this->sprite->draw($screen);
 
-        if ($screen->isDebug()) {
+        if ($screen->isDebugRectDisplayEnabled()) {
             foreach ($this->getHitBoxes() as $hitBox) {
                 $screen->drawDebugRect($hitBox, ColorUtils::createColor([128, 0, 0]));
             }
@@ -269,7 +329,6 @@ abstract class GameObject
 
     protected function setInitialized(): void
     {
-        assert($this->getPool()->isAcquired($this));
         assert(! $this->initialized);
         assert(! $this->terminated);
 
@@ -311,7 +370,7 @@ abstract class GameObject
         );
 
         $this->terminated = true;
-        $this->terminationTime = Timer::getCurrentFrameStartTime();
+        $this->terminationTime = Timer::getCurrentGameTime();
         $this->pool->release($this);
         $this->getGame()->removeGameObject($this);
     }

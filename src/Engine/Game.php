@@ -4,7 +4,11 @@ namespace NoiseByNorthwest\TermAsteroids\Engine;
 
 abstract class Game
 {
+    private AdaptivePerformanceManager $adaptivePerformanceManager;
+
     private Screen $screen;
+
+    private bool $kittyKeyboardProtocolSupported;
 
     private bool $finished = false;
 
@@ -15,14 +19,15 @@ abstract class Game
 
     private GameObjectPool $gameObjectPool;
 
-    private bool $profilingEnabled;
+    private bool $profilerEnabled;
 
-    private bool $profilingStarted = false;
+    private bool $profilingEnabled = false;
 
-    function __construct()
+    function __construct(bool $kittyKeyboardProtocolSupported)
     {
+        $this->kittyKeyboardProtocolSupported = $kittyKeyboardProtocolSupported;
         $this->gameObjectPool = new GameObjectPool($this);
-        $this->profilingEnabled = getenv('SPX_ENABLED') === '1' && getenv('SPX_AUTO_START') === '0';
+        $this->profilerEnabled = getenv('SPX_ENABLED') === '1' && getenv('SPX_AUTO_START') === '0';
     }
 
     public function getGameObjectPool(): GameObjectPool
@@ -32,16 +37,26 @@ abstract class Game
 
     public function run(): void
     {
-        Timer::init();
-        Input::init();
+        gc_disable();
 
-        $this->screen = new Screen(300, 144);
+        Timer::init();
+
+        $this->adaptivePerformanceManager = new AdaptivePerformanceManager(45);
+        $this->screen = new Screen(300, 144, $this->adaptivePerformanceManager);
         $this->onInit();
         $this->screen->init();
+        // must be called after screen init to not disable kitty's keyboard protocol
+        Input::init(kittyKeyboardProtocolSupported: $this->kittyKeyboardProtocolSupported);
         $this->reset();
 
         while (!$this->finished) {
+            $profilingEnabled = $this->profilingEnabled;
+            if ($profilingEnabled) {
+                spx_profiler_start();
+            }
+
             Timer::startFrame();
+            $this->adaptivePerformanceManager->update();
 
             $this->onUpdate();
 
@@ -78,16 +93,10 @@ abstract class Game
                 $renderedGameObjectStats[$className]++;
             }
 
-            $this->screen->clear(ColorUtils::createColor('#000000'));
-
             usort($renderedGameObjects, fn (GameObject $a, GameObject $b) => $a->getZIndex() <=> $b->getZIndex());
-            foreach ($renderedGameObjects as $gameObject) {
-                $gameObject->render();
-            }
 
             arsort($renderedGameObjectStats);
-
-            $this->screen->update(sprintf(
+            $debugLine = sprintf(
                 'Game objects: total: %4d - rendered: %4d - acquired: %4d - released: %4d - rendered by type: (%s)',
                 $this->gameObjectPool->getGameObjectCount(),
                 count($renderedGameObjects),
@@ -99,10 +108,28 @@ abstract class Game
                         array_slice(explode('\\', $k), -1, 1)[0],
                         $renderedGameObjectStats[$k]
                     ),
-                    array_keys(array_slice($renderedGameObjectStats, 0, 6))
+                    array_keys(array_slice($renderedGameObjectStats, 0, 7))
                 ))
-            ));
+            );
+
+            $this->screen->clear(ColorUtils::createColor('#000000'));
+            foreach ($renderedGameObjects as $gameObject) {
+                $gameObject->render();
+            }
+
+            $this->screen->update($debugLine);
+
+            $this->gameObjectPool->resetExcludedGameObjectCounts();
+
+            if ($profilingEnabled) {
+                spx_profiler_stop();
+            }
         }
+    }
+
+    public function getAdaptivePerformanceManager(): AdaptivePerformanceManager
+    {
+        return $this->adaptivePerformanceManager;
     }
 
     public function getScreen(): Screen
@@ -165,6 +192,16 @@ abstract class Game
 
     protected function reset(): void
     {
+        for ($i = 0; $i < 10; ++$i) {
+            $gcStatus = gc_status();
+
+            if ($gcStatus['roots'] < 1000) {
+                break;
+            }
+
+            gc_collect_cycles();
+        }
+
         Timer::reset();
 
         $this->screen->reset();
@@ -177,16 +214,10 @@ abstract class Game
 
     protected function toggleProfiling(): void
     {
-        if (!$this->profilingEnabled) {
+        if (! $this->profilerEnabled) {
             return;
         }
 
-        if ($this->profilingStarted) {
-            spx_profiler_stop();
-        } else {
-            spx_profiler_start();
-        }
-
-        $this->profilingStarted = ! $this->profilingStarted;
+        $this->profilingEnabled = ! $this->profilingEnabled;
     }
 }

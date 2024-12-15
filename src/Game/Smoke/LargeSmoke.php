@@ -2,6 +2,9 @@
 
 namespace NoiseByNorthwest\TermAsteroids\Game\Smoke;
 
+use NoiseByNorthwest\TermAsteroids\Engine\Math;
+use NoiseByNorthwest\TermAsteroids\Game\Flame\LargeFlame;
+
 class LargeSmoke extends Smoke
 {
     public static function getMaxAcquiredCount(): ?int
@@ -11,6 +14,6 @@ class LargeSmoke extends Smoke
 
     public static function getSize(): int
     {
-        return 70;
+        return Math::roundToInt(LargeFlame::getSize() * static::getFlameSizeRatio());
     }
 }

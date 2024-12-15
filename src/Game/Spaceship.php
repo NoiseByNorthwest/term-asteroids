@@ -6,6 +6,7 @@ use NoiseByNorthwest\TermAsteroids\Engine\Accelerator;
 use NoiseByNorthwest\TermAsteroids\Engine\BitmapBuilder;
 use NoiseByNorthwest\TermAsteroids\Engine\ColorUtils;
 use NoiseByNorthwest\TermAsteroids\Engine\Math;
+use NoiseByNorthwest\TermAsteroids\Engine\Mover;
 use NoiseByNorthwest\TermAsteroids\Engine\Sprite;
 use NoiseByNorthwest\TermAsteroids\Engine\SpriteEffect;
 use NoiseByNorthwest\TermAsteroids\Engine\SpriteRenderingParameters;
@@ -15,9 +16,19 @@ use NoiseByNorthwest\TermAsteroids\Game\Flame\Flame;
 use NoiseByNorthwest\TermAsteroids\Game\Flame\MediumFlame;
 use NoiseByNorthwest\TermAsteroids\Game\Flame\VerySmallFlame;
 
-class Player extends DamageableGameObject
+class Spaceship extends DamageableGameObject
 {
-    private static int $maxHealth = 15000;
+    public const THRUSTER_UP = 0;
+
+    public const THRUSTER_DOWN = 1;
+
+    public const THRUSTER_LEFT = 2;
+
+    public const THRUSTER_RIGHT = 3;
+
+    private const BULLET_TIME_DURATION = 8;
+
+    private static int $maxHealth = 5000;
 
     private float $lastFireTime;
 
@@ -26,6 +37,8 @@ class Player extends DamageableGameObject
     private int $plasmaBallLevel = 0;
 
     private int $energyBeamLevel = 0;
+
+    private float $lastBulletTimeStartTime = -INF;
 
     /**
      * @var EnergyBeamSection[]
@@ -81,44 +94,46 @@ class Player extends DamageableGameObject
                 ],
                 [
                     new SpriteEffect(
-                        function (SpriteRenderingParameters $renderingParameters, float $age) {
-                            $renderingParameters->setBlendingColor(
-                                ColorUtils::rgbaToColor(
-                                    255,
-                                    0,
-                                    0,
-                                    (int) (
-                                        255 * (1 - $this->getHealth() / static::getMaxHealth()) * abs(sin($age * 2))
-                                    )
-                                )
-                            );
+                        function (SpriteRenderingParameters $renderingParameters) {
+                            if (Timer::getCurrentGameTime() - $this->lastBulletTimeStartTime < self::BULLET_TIME_DURATION) {
+                                $width = $this->getSprite()->getWidth();
+                                $verticalBlendingColors = [];
+                                for ($i = 0; $i < $width; $i++) {
+                                    $verticalBlendingColors[$i] = ColorUtils::rgbaToColor(
+                                        255,
+                                        255,
+                                        0,
+                                        (int) (
+                                            255 * (0.5 + 0.5 * sin(($i / ($width - 1)) * M_PI + 50 * Timer::getCurrentGameTime()))
+                                        )
+                                    );
+                                }
+
+                                $renderingParameters->setVerticalBlendingColors($verticalBlendingColors);
+                            }
+
+                            $renderingParameters->setPersisted(true);
+                            $renderingParameters->setPersistedColor(ColorUtils::createColor([128, 128, 128, 32]));
                         },
-                    )
+                    ),
                 ]
             ),
-            function () {
-                return new Accelerator(
-                    70,
-                    0.2,
-                    0.1,
-                    0.2
-                );
-            }
         );
     }
 
-    public function init(Vec2 $pos): void
+    public function init(): void
     {
         $this->lastFireTime = 0;
         $this->energyBeamSections = [];
         for ($i = 0; $i < $this->getScreen()->getWidth(); $i += EnergyBeamSection::WIDTH) {
-            $energyBeamSection = $this->getPool()->acquire(EnergyBeamSection::class);
-
-            $energyBeamSection->init(
-                $this,
-                new Vec2(
+            $energyBeamSection = $this->getPool()->acquire(
+                EnergyBeamSection::class,
+                pos: new Vec2(
                     $i,
                     40,
+                ),
+                initializer: fn (EnergyBeamSection $e) => $e->init(
+                    $this,
                 )
             );
 
@@ -130,15 +145,40 @@ class Player extends DamageableGameObject
         $this->energyBeamDir = 1;
         $this->damageFlame = null;
 
-        $this->getPos()->setVec($pos);
-        $this->getMover()->setBoundingRect($this->getScreen()->getRect());
+        $this->setMovers(
+            array_map(
+                fn ($dir) => new Mover(
+                    $dir,
+                    new Accelerator(
+                        70,
+                        0.01,
+                        0.07,
+                        0.2,
+                        autoStart: false
+                    )
+                ),
+                [
+                    new Vec2(0, -1),
+                    new Vec2(0, 1),
+                    new Vec2(-1, 0),
+                    new Vec2(1, 0),
+                ]
+            )
+        );
 
-        $this->setInitialized();
+        $this->damageableObjectInit();
+    }
+
+    protected function afterPosUpdate(): void
+    {
+        $this->getPos()->boundToRect($this->getScreen()->getRect());
     }
 
     protected function doUpdate(): void
     {
-        $currentTime = Timer::getCurrentFrameStartTime();
+        parent::doUpdate();
+
+        $currentTime = Timer::getCurrentGameTime();
         if ($currentTime - $this->lastFireTime > 0.4) {
             $this->fireMultiplePlasmaBalls();
             $this->fireBlueLaser();
@@ -146,6 +186,28 @@ class Player extends DamageableGameObject
         }
 
         $this->updateEnergyBeam();
+
+        if ($currentTime - $this->lastBulletTimeStartTime < self::BULLET_TIME_DURATION) {
+            Timer::setGameTimeSpeedFactor(Math::lerpPath([
+                '0.0' => 1,
+                '0.5' => 0.3,
+                '0.8' => 0.2,
+                '1.0' => 1,
+            ], ($currentTime - $this->lastBulletTimeStartTime) / self::BULLET_TIME_DURATION));
+        } elseif ($this->lastBulletTimeStartTime !== -INF) {
+            Timer::setGameTimeSpeedFactor(1);
+            $this->lastBulletTimeStartTime = -INF;
+        }
+    }
+
+    public function startThruster(int $thruster): void
+    {
+        $this->getMovers()[$thruster]->getAccelerator()->restart();
+    }
+
+    public function stopThruster(int $thruster): void
+    {
+        $this->getMovers()[$thruster]->getAccelerator()->stop();
     }
 
     public function improveWeaponLevels(int $blueLaser = 0, int $plasmaBall = 0, int $energyBeam = 0): void
@@ -155,19 +217,33 @@ class Player extends DamageableGameObject
         $this->plasmaBallLevel += $plasmaBall;
         $this->plasmaBallLevel = Math::bound($this->plasmaBallLevel, 0, 4);
         $this->energyBeamLevel += $energyBeam;
-        $this->energyBeamLevel = Math::bound($this->energyBeamLevel, 0, 4);
+        $this->energyBeamLevel = Math::bound($this->energyBeamLevel, 0, 6);
     }
 
-    protected function onHit(): void
+    public function startBulletTime(): void
     {
-        if ($this->getHealth() < self::getMaxHealth() * 0.5 && ! $this->damageFlame) {
-            $flame = $this->getPool()->acquire(VerySmallFlame::class);
+        $this->lastBulletTimeStartTime = Timer::getCurrentGameTime();
+    }
 
-            $flame->init(
-                $this->getPos()->copy()->addVec(new Vec2(-$this->getSprite()->getWidth() / 2, 0)),
-                $this,
-                repeated: true,
-                smokeEmissionPeriod: 0.5,
+    protected function onCollision(DamageableGameObject $other, int $otherHealthBeforeCollision): void
+    {
+        parent::onCollision($other, $otherHealthBeforeCollision);
+
+        $this->hit($otherHealthBeforeCollision);
+
+        if ($this->isTerminated()) {
+            return;
+        }
+
+        if ($this->getHealth() < self::getMaxHealth() * 0.6 && ! $this->damageFlame) {
+            $flame = $this->getPool()->acquire(
+                VerySmallFlame::class,
+                pos: $this->getPos()->copy()->addVec(new Vec2(-$this->getSprite()->getWidth() / 2, 0)),
+                initializer: fn (VerySmallFlame $e) => $e->init(
+                    $this,
+                    repeated: true,
+                    smokeEmissionPeriod: 0.1,
+                ),
             );
 
             $this->getGame()->addGameObject($flame);
@@ -178,17 +254,21 @@ class Player extends DamageableGameObject
 
     protected function onRepair(): void
     {
-        if ($this->getHealth() >= self::getMaxHealth() * 0.5 && $this->damageFlame) {
+        if ($this->getHealth() >= self::getMaxHealth() * 0.6 && $this->damageFlame) {
             $this->damageFlame->setRepeated(false);
             $this->damageFlame = null;
         }
     }
 
 
-    protected function onDestruction(): void
+    protected function onDestructionPhaseEnd(): void
     {
-        $flame = $this->getPool()->acquire(MediumFlame::class);
-        $flame->init($this->getPos());
+        $flame = $this->getPool()->acquire(
+            MediumFlame::class,
+            pos: $this->getPos(),
+            initializer: fn (MediumFlame $e) => $e->init()
+        );
+
         $this->getGame()->addGameObject($flame);
     }
 
@@ -196,15 +276,16 @@ class Player extends DamageableGameObject
     {
         $count = $this->blueLaserLevel * 2 - 1;
         for ($i = 0; $i < $count; $i++) {
-            $laser = $this->getPool()->acquire(BlueLaser::class);
-
-            $laser->init(
-                $this,
-                new Vec2(
+            $laser = $this->getPool()->acquire(
+                BlueLaser::class,
+                pos: new Vec2(
                     $this->getBoundingBox()->getRight() + 10,
                     $this->getPos()->getY() + 1
-                        + 2 * ($i % 2 === 0 ? -1 : 1) * ceil($i / 2),
-                )
+                    + 2 * ($i % 2 === 0 ? -1 : 1) * ceil($i / 2),
+                ),
+                initializer: fn (BlueLaser $e) => $e->init(
+                    $this,
+                ),
             );
 
             $this->getGame()->addGameObject($laser);
@@ -215,19 +296,20 @@ class Player extends DamageableGameObject
     {
         $count = $this->plasmaBallLevel * 2 - 1;
         for ($i = 0; $i < $count; $i++) {
-            $plasmaBall = $this->getPool()->acquire(PlasmaBall::class);
-
-            $plasmaBall->init(
-                $this,
-                new Vec2(
+            $plasmaBall = $this->getPool()->acquire(
+                PlasmaBall::class,
+                pos: new Vec2(
                     $this->getBoundingBox()->getRight() + 10,
                     $this->getPos()->getY() + 1
                 ),
-                new Vec2(
-                    1,
-                    (
-                        0.1 * ($i % 2 === 0 ? -1 : 1) * ceil($i / 2)
-                    )
+                initializer: fn (PlasmaBall $e) => $e->init(
+                    $this,
+                    new Vec2(
+                        1,
+                        (
+                            0.1 * ($i % 2 === 0 ? -1 : 1) * ceil($i / 2)
+                        )
+                    ),
                 )
             );
 
@@ -248,8 +330,8 @@ class Player extends DamageableGameObject
             return;
         }
 
-        $this->energyBeamAngleDeg += Timer::getPreviousFrameTime()
-            * Math::lerp(12, 60, Math::bound((Timer::getCurrentFrameStartTime() - $lastHitTime) / 0.8))
+        $this->energyBeamAngleDeg += Timer::getElapsedGameTimeSincePreviousFrame()
+            * Math::lerp(12, 60, Math::bound((Timer::getCurrentGameTime() - $lastHitTime) / 0.8))
             * $this->energyBeamDir
         ;
 
@@ -276,7 +358,7 @@ class Player extends DamageableGameObject
 
         $delta = $targetPos
             ->copy()
-            ->minVec($firePos)
+            ->subVec($firePos)
         ;
 
         foreach ($this->energyBeamSections as $energyBeamSection) {

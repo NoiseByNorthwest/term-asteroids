@@ -55,6 +55,11 @@ abstract class Math
         return $a < $b ? $b - $a : $a - $b;
     }
 
+    public static function relativeDist(float $v, float $min, float $max): float
+    {
+        return ($v - $min) / ($max - $min);
+    }
+
     public static function roundToInt(float $v): int
     {
         return (int) round($v);

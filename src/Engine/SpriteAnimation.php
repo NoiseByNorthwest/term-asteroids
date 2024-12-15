@@ -53,7 +53,7 @@ class SpriteAnimation
     public function reset(): void
     {
         $this->currentFrameRawIdx = 0;
-        $this->currentFrameStartTime = Timer::getCurrentFrameStartTime();
+        $this->currentFrameStartTime = Timer::getCurrentGameTime();
     }
 
     /**
@@ -109,6 +109,11 @@ class SpriteAnimation
         return $this->currentFrameRawIdx % count($this->loopIndexes);
     }
 
+    public function getCompletionRatio(): float
+    {
+        return $this->getCurrentFrameIdx() / (count($this->loopIndexes) - 1);
+    }
+
     public function isFinished(): bool
     {
         return ! $this->repeated && $this->currentFrameRawIdx >= count($this->loopIndexes) - 1;
@@ -120,7 +125,7 @@ class SpriteAnimation
             return;
         }
 
-        $currentTime = Timer::getCurrentFrameStartTime();
+        $currentTime = Timer::getCurrentGameTime();
         while ($this->getCurrentFrame()->getDuration() < $currentTime - $this->currentFrameStartTime) {
             $this->currentFrameStartTime += $this->getCurrentFrame()->getDuration();
             $this->currentFrameRawIdx++;
@@ -130,6 +135,6 @@ class SpriteAnimation
     public function selectRandomFrame(): void
     {
         $this->currentFrameRawIdx = RandomUtils::getRandomInt(0, count($this->frames) - 1);
-        $this->currentFrameStartTime = Timer::getCurrentFrameStartTime();
+        $this->currentFrameStartTime = Timer::getCurrentGameTime();
     }
 }

@@ -20,6 +20,8 @@ NativeRenderer * NativeRenderer_create(size_t width, size_t height)
     nativeRenderer->previousFrameBuffer = malloc(nativeRenderer->pixelCount * sizeof(int64_t));
     nativeRenderer->persistenceBuffer = malloc(nativeRenderer->pixelCount * sizeof(int64_t));
 
+    nativeRenderer->drawnBitmapPixelCount = 0;
+
     if (
         ! nativeRenderer->currentFrameBuffer ||
         ! nativeRenderer->previousFrameBuffer ||
@@ -63,6 +65,8 @@ void NativeRenderer_clear(NativeRenderer * nativeRenderer, int64_t color)
     for (size_t i = 0; i < nativeRenderer->pixelCount; i++) {
         nativeRenderer->currentFrameBuffer[i] = color;
     }
+
+    nativeRenderer->drawnBitmapPixelCount = 0;
 }
 
 void NativeRenderer_drawBitmap(
@@ -74,14 +78,19 @@ void NativeRenderer_drawBitmap(
     int64_t y,
     int64_t globalAlpha,
     float brightness,
-    int64_t blendingColor,
+    int64_t globalBlendingColor,
+    int64_t * verticalBlendingColors,
     int64_t persisted,
     int64_t globalPersistedColor,
-    int64_t * horizontalBackgroundDistortionOffsets
+    int64_t * horizontalDistortionOffsets,
+    int64_t * horizontalBackgroundDistortionOffsets,
+    float ditheringAlphaRatioThreshold
 ) {
     if (globalAlpha == 0) {
         return;
     }
+
+    const double fullBrightnessReciprocal = 1 / 255.0;
 
     for (size_t i = 0; i < bitmapHeight; i++) {
         const size_t pxPosY = y + i;
@@ -92,10 +101,11 @@ void NativeRenderer_drawBitmap(
             continue;
         }
 
+        const int64_t horizontalDistortionOffset = horizontalDistortionOffsets[i];
         const int64_t horizontalBackgroundDistortionOffset = horizontalBackgroundDistortionOffsets[i];
 
         for (size_t j = 0; j < bitmapWidth; j++) {
-            const size_t pxPosX = x + j;
+            const size_t pxPosX = x + j + horizontalDistortionOffset;
 
             if (
                 pxPosX < 0 || pxPosX >= nativeRenderer->width
@@ -112,6 +122,56 @@ void NativeRenderer_drawBitmap(
             const int64_t alpha = (color >> 24) & 0xff;
             if (alpha == 0) {
                 continue;
+            }
+
+            int64_t blendingColor = globalBlendingColor;
+            const int64_t verticalBlendingColor = verticalBlendingColors[j];
+            if (blendingColor == -1) {
+                blendingColor = verticalBlendingColor;
+            } else if (verticalBlendingColor != -1) {
+                const int64_t verticalBlendingColorA = (verticalBlendingColor >> 24) & 0xff;
+                if (verticalBlendingColorA != 0) {
+                    int64_t blendingColorA = (blendingColor >> 24) & 0xff;
+                    if (blendingColorA == 0) {
+                        blendingColor = verticalBlendingColor;
+                    } else {
+                        const int64_t verticalBlendingColorR = (verticalBlendingColor >> 16) & 0xff;
+                        const int64_t verticalBlendingColorG = (verticalBlendingColor >> 8) & 0xff;
+                        const int64_t verticalBlendingColorB = (verticalBlendingColor >> 0) & 0xff;
+                        int64_t blendingColorR = (blendingColor >> 16) & 0xff;
+                        int64_t blendingColorG = (blendingColor >> 8) & 0xff;
+                        int64_t blendingColorB = (blendingColor >> 0) & 0xff;
+
+                        const double blendingColorAlphaRatio = blendingColorA / ((double) blendingColorA + verticalBlendingColorA);
+
+                        blendingColorR = (int64_t) (
+                            blendingColorR * blendingColorAlphaRatio
+                                + verticalBlendingColorR * (1 - blendingColorAlphaRatio)
+                        );
+
+                        blendingColorG = (int64_t) (
+                            blendingColorG * blendingColorAlphaRatio
+                                + verticalBlendingColorG * (1 - blendingColorAlphaRatio)
+                        );
+
+                        blendingColorB = (int64_t) (
+                            blendingColorB * blendingColorAlphaRatio
+                                + verticalBlendingColorB * (1 - blendingColorAlphaRatio)
+                        );
+
+                        blendingColorA = (int64_t) (
+                            blendingColorA * blendingColorAlphaRatio
+                                + verticalBlendingColorA * (1 - blendingColorAlphaRatio)
+                        );
+
+                        blendingColor =
+                            blendingColorA << 24
+                            | blendingColorR << 16
+                            | blendingColorG << 8
+                            | blendingColorB
+                        ;
+                    }
+                }
             }
 
             int64_t persistedColor = globalPersistedColor >= 0 ? globalPersistedColor : color;
@@ -135,19 +195,21 @@ void NativeRenderer_drawBitmap(
                     const int64_t blendingColorG = (blendingColor >> 8) & 0xff;
                     const int64_t blendingColorB = blendingColor & 0xff;
 
+                    const double blendingColorAlphaRatio = blendingColorA * fullBrightnessReciprocal;
+
                     colorR = (int64_t) (
-                        blendingColorR * (blendingColorA / 255.0)
-                        + colorR * (1 - (blendingColorA / 255.0))
+                        blendingColorR * blendingColorAlphaRatio
+                        + colorR * (1 - blendingColorAlphaRatio)
                     );
 
                     colorG = (int64_t) (
-                        blendingColorG * (blendingColorA / 255.0)
-                        + colorG * (1 - (blendingColorA / 255.0))
+                        blendingColorG * blendingColorAlphaRatio
+                        + colorG * (1 - blendingColorAlphaRatio)
                     );
 
                     colorB = (int64_t) (
-                        blendingColorB * (blendingColorA / 255.0)
-                        + colorB * (1 - (blendingColorA / 255.0))
+                        blendingColorB * blendingColorAlphaRatio
+                        + colorB * (1 - blendingColorAlphaRatio)
                     );
                 }
 
@@ -157,7 +219,7 @@ void NativeRenderer_drawBitmap(
 
                 int64_t combinedAlpha = 255;
                 if (globalAlpha < 255 || alpha < 255) {
-                    combinedAlpha = (int64_t) (255 * (globalAlpha / 255.0) * (alpha / 255.0));
+                    combinedAlpha = (int64_t) (255 * (globalAlpha * fullBrightnessReciprocal) * (alpha * fullBrightnessReciprocal));
                 }
 
                 if (persisted) {
@@ -181,27 +243,46 @@ void NativeRenderer_drawBitmap(
                 }
 
                 if (combinedAlpha < 255) {
-                    const int64_t backgroundColor = pxIndex + horizontalBackgroundDistortionOffset < nativeRenderer->pixelCount
-                        ? nativeRenderer->currentFrameBuffer[pxIndex + horizontalBackgroundDistortionOffset] : 0;
+                    double combinedAlphaRatio = combinedAlpha * fullBrightnessReciprocal;
 
-                    const int64_t backgroundColorR = (backgroundColor >> 16) & 0xff;
-                    const int64_t backgroundColorG = (backgroundColor >> 8) & 0xff;
-                    const int64_t backgroundColorB = backgroundColor & 0xff;
+                    if (ditheringAlphaRatioThreshold > 0 && combinedAlphaRatio <= ditheringAlphaRatioThreshold) {
+                        const uint64_t rn = (214013 * pxIndex + 2531011) & 0xffff;
+                        combinedAlphaRatio = (combinedAlphaRatio * 0xffff) < rn ? 0.0 : 1.0;
 
-                    colorR = (int64_t) (
-                        colorR * (combinedAlpha / 255.0)
-                        + backgroundColorR * (1 - (combinedAlpha / 255.0))
-                    );
+                        if (combinedAlphaRatio == 0.0 && horizontalBackgroundDistortionOffset == 0) {
+                            continue;
+                        }
+                    }
 
-                    colorG = (int64_t) (
-                        colorG * (combinedAlpha / 255.0)
-                        + backgroundColorG * (1 - (combinedAlpha / 255.0))
-                    );
+                    if (combinedAlphaRatio < 1) {
+                        const int64_t backgroundColor = pxIndex + horizontalBackgroundDistortionOffset < nativeRenderer->pixelCount
+                            ? nativeRenderer->currentFrameBuffer[pxIndex + horizontalBackgroundDistortionOffset] : 0;
 
-                    colorB = (int64_t) (
-                        colorB * (combinedAlpha / 255.0)
-                        + backgroundColorB * (1 - (combinedAlpha / 255.0))
-                    );
+                        const int64_t backgroundColorR = (backgroundColor >> 16) & 0xff;
+                        const int64_t backgroundColorG = (backgroundColor >> 8) & 0xff;
+                        const int64_t backgroundColorB = backgroundColor & 0xff;
+
+                        if (combinedAlphaRatio == 0.0) {
+                            colorR = backgroundColorR;
+                            colorG = backgroundColorG;
+                            colorB = backgroundColorB;
+                        } else {
+                            colorR = (int64_t) (
+                                colorR * combinedAlphaRatio
+                                + backgroundColorR * (1 - combinedAlphaRatio)
+                            );
+
+                            colorG = (int64_t) (
+                                colorG * combinedAlphaRatio
+                                + backgroundColorG * (1 - combinedAlphaRatio)
+                            );
+
+                            colorB = (int64_t) (
+                                colorB * combinedAlphaRatio
+                                + backgroundColorB * (1 - combinedAlphaRatio)
+                            );
+                        }
+                    }
                 }
 
                 color =
@@ -213,46 +294,56 @@ void NativeRenderer_drawBitmap(
             }
 
             nativeRenderer->currentFrameBuffer[pxIndex] = color;
+            nativeRenderer->drawnBitmapPixelCount++;
             if (persisted && alpha > 1) {
                 const int64_t currentPersistedColor = nativeRenderer->persistenceBuffer[pxIndex];
                 const int64_t currentPersistedColorA = (currentPersistedColor >> 24) & 0xff;
                 if (currentPersistedColorA <= 2) {
                     nativeRenderer->persistenceBuffer[pxIndex] = persistedColor;
                 } else {
-                    const int64_t currentPersistedColorR = (currentPersistedColor >> 16) & 0xff;
-                    const int64_t currentPersistedColorG = (currentPersistedColor >> 8) & 0xff;
-                    const int64_t currentPersistedColorB = currentPersistedColor & 0xff;
-
                     int64_t persistedColorA = (persistedColor >> 24) & 0xff;
-                    int64_t persistedColorR = (persistedColor >> 16) & 0xff;
-                    int64_t persistedColorG = (persistedColor >> 8) & 0xff;
-                    int64_t persistedColorB = persistedColor & 0xff;
+                    double blendingRatio = persistedColorA / (double) (persistedColorA + currentPersistedColorA);
 
-                    const double blendingRatio = persistedColorA / (double) (persistedColorA + currentPersistedColorA);
+                    if (ditheringAlphaRatioThreshold > 0 && blendingRatio <= ditheringAlphaRatioThreshold) {
+                        const uint64_t rn = (214013 * pxIndex + 2531011) & 0xffff;
+                        blendingRatio = (blendingRatio * 0xffff) < rn ? 0.0 : 1.0;
+                    }
 
-                    persistedColorA = persistedColorA > currentPersistedColorA ? persistedColorA : currentPersistedColorA;
+                    if (blendingRatio == 1.0) {
+                        nativeRenderer->persistenceBuffer[pxIndex] = persistedColor;
+                    } else if (blendingRatio > 0) {
+                        const int64_t currentPersistedColorR = (currentPersistedColor >> 16) & 0xff;
+                        const int64_t currentPersistedColorG = (currentPersistedColor >> 8) & 0xff;
+                        const int64_t currentPersistedColorB = currentPersistedColor & 0xff;
 
-                    persistedColorR = (int64_t) (
-                        persistedColorR * blendingRatio
-                            + currentPersistedColorR * (1 - blendingRatio)
-                    );
+                        int64_t persistedColorR = (persistedColor >> 16) & 0xff;
+                        int64_t persistedColorG = (persistedColor >> 8) & 0xff;
+                        int64_t persistedColorB = persistedColor & 0xff;
 
-                    persistedColorG = (int64_t) (
-                        persistedColorG * blendingRatio
-                        + currentPersistedColorG * (1 - blendingRatio)
-                    );
+                        persistedColorA = persistedColorA > currentPersistedColorA ? persistedColorA : currentPersistedColorA;
 
-                    persistedColorB = (int64_t) (
-                        persistedColorB * blendingRatio
-                        + currentPersistedColorB * (1 - blendingRatio)
-                    );
+                        persistedColorR = (int64_t) (
+                            persistedColorR * blendingRatio
+                                + currentPersistedColorR * (1 - blendingRatio)
+                        );
 
-                    nativeRenderer->persistenceBuffer[pxIndex] =
-                        ((persistedColorA & 0xff) << 24) |
-                        ((persistedColorR & 0xff) << 16) |
-                        ((persistedColorG & 0xff) << 8) |
-                        (persistedColorB & 0xff)
-                    ;
+                        persistedColorG = (int64_t) (
+                            persistedColorG * blendingRatio
+                            + currentPersistedColorG * (1 - blendingRatio)
+                        );
+
+                        persistedColorB = (int64_t) (
+                            persistedColorB * blendingRatio
+                            + currentPersistedColorB * (1 - blendingRatio)
+                        );
+
+                        nativeRenderer->persistenceBuffer[pxIndex] =
+                            ((persistedColorA & 0xff) << 24) |
+                            ((persistedColorR & 0xff) << 16) |
+                            ((persistedColorG & 0xff) << 8) |
+                            (persistedColorB & 0xff)
+                        ;
+                    }
                 }
             }
         }
@@ -294,204 +385,127 @@ void NativeRenderer_drawRect(
 
             const size_t pxIndex = pxPosY * nativeRenderer->width + pxPosX;
             nativeRenderer->currentFrameBuffer[pxIndex] = color;
+            nativeRenderer->drawnBitmapPixelCount++;
         }
     }
 }
 
+size_t NativeRenderer_getDrawnBitmapPixelCount(
+    NativeRenderer * nativeRenderer
+) {
+    return nativeRenderer->drawnBitmapPixelCount;
+}
+
 size_t NativeRenderer_update(
     NativeRenderer * nativeRenderer,
+    int64_t trueColorModeEnabled,
     int64_t persistenceEffectsEnabled,
     int64_t persistenceAlphaDecrease,
-    int64_t colorReductionFactor
+    int64_t removedColorDepthBits
 ) {
-    static char buffer[16 * 1024];
+    static char buffer[4 * 1024];
 
     buffer[0] = 0;
     char * bufferCursor = buffer;
     size_t remainingBufferSize = sizeof buffer;
 
     size_t updatedCharacterCount = 0;
+    const double fullBrightnessReciprocal = 1 / 255.0;
+    const uint64_t colorReductionCorrectionMask = removedColorDepthBits != 0 ? 1 << (removedColorDepthBits - 1) : 0;
+
     int lastPxCol;
     int lastUpperColor = 0, lastLowerColor = 0;
 
     for (size_t i = 0; i < nativeRenderer->height; i += 2) {
         lastPxCol = nativeRenderer->width;
         for (size_t j = 0; j < nativeRenderer->width; j++) {
-            const size_t upperPxIndex = i * nativeRenderer->width + j;
-            const size_t lowerPxIndex = (i + 1) * nativeRenderer->width + j;
+            size_t upperPxIndex = 0;
+            size_t lowerPxIndex = 0;
 
-            int64_t upperColor = nativeRenderer->currentFrameBuffer[upperPxIndex];
-            int64_t lowerColor = nativeRenderer->currentFrameBuffer[lowerPxIndex];
+            int64_t upperColor = 0;
+            int64_t lowerColor = 0;
 
-            int64_t persistedColor = nativeRenderer->persistenceBuffer[upperPxIndex];
-            int64_t persistedColorA = (persistedColor >> 24) & 0xff;
+            for (size_t k = 0; k < 2; k++) {
+                const size_t pxIndex = (i + k) * nativeRenderer->width + j;
 
-            if (!persistenceEffectsEnabled && persistedColorA > 0) {
-                nativeRenderer->persistenceBuffer[upperPxIndex] = 0;
-            }
+                int64_t color = nativeRenderer->currentFrameBuffer[pxIndex];
+                int64_t persistedColor = nativeRenderer->persistenceBuffer[pxIndex];
 
-            if (persistenceEffectsEnabled && persistedColorA > 0) {
-                const int64_t persistedColorR = (persistedColor >> 16) & 0xff;
-                const int64_t persistedColorG = (persistedColor >> 8) & 0xff;
-                const int64_t persistedColorB = persistedColor & 0xff;
+                int64_t persistedColorA = (persistedColor >> 24) & 0xff;
 
-                int64_t colorR = (upperColor >> 16) & 0xff;
-                int64_t colorG = (upperColor >> 8) & 0xff;
-                int64_t colorB = upperColor & 0xff;
-
-                colorR = (int64_t) (
-                    colorR * (1 - (persistedColorA / 255.0))
-                    + persistedColorR * (persistedColorA / 255.0)
-                );
-
-                colorG = (int64_t) (
-                    colorG * (1 - (persistedColorA / 255.0))
-                    + persistedColorG * (persistedColorA / 255.0)
-                );
-
-                colorB = (int64_t) (
-                    colorB * (1 - (persistedColorA / 255.0))
-                    + persistedColorB * (persistedColorA / 255.0)
-                );
-
-                upperColor =
-                    (255 << 24) |
-                    ((colorR & 0xff) << 16) |
-                    ((colorG & 0xff) << 8) |
-                    (colorB & 0xff)
-                ;
-
-                persistedColorA -= persistenceAlphaDecrease;
-                if (persistedColorA < 0) {
-                    persistedColorA = 0;
+                if (!persistenceEffectsEnabled && persistedColorA > 0) {
+                    nativeRenderer->persistenceBuffer[pxIndex] = 0;
                 }
 
-                nativeRenderer->persistenceBuffer[upperPxIndex] =
-                    ((persistedColorA & 0xff) << 24) |
-                    ((persistedColorR & 0xff) << 16) |
-                    ((persistedColorG & 0xff) << 8) |
-                    (persistedColorB & 0xff)
-                ;
+                if (persistenceEffectsEnabled && persistedColorA > 0) {
+                    const int64_t persistedColorR = (persistedColor >> 16) & 0xff;
+                    const int64_t persistedColorG = (persistedColor >> 8) & 0xff;
+                    const int64_t persistedColorB = persistedColor & 0xff;
 
-                nativeRenderer->currentFrameBuffer[upperPxIndex] = upperColor;
-            }
+                    int64_t colorR = (color >> 16) & 0xff;
+                    int64_t colorG = (color >> 8) & 0xff;
+                    int64_t colorB = color & 0xff;
 
-            persistedColor = nativeRenderer->persistenceBuffer[lowerPxIndex];
-            persistedColorA = (persistedColor >> 24) & 0xff;
-
-            if (!persistenceEffectsEnabled && persistedColorA > 0) {
-                nativeRenderer->persistenceBuffer[lowerPxIndex] = 0;
-            }
-
-            if (persistenceEffectsEnabled && persistedColorA > 0) {
-                const int64_t persistedColorR = (persistedColor >> 16) & 0xff;
-                const int64_t persistedColorG = (persistedColor >> 8) & 0xff;
-                const int64_t persistedColorB = persistedColor & 0xff;
-
-                int64_t colorR = (lowerColor >> 16) & 0xff;
-                int64_t colorG = (lowerColor >> 8) & 0xff;
-                int64_t colorB = lowerColor & 0xff;
-
-                colorR = (int64_t) (
-                    colorR * (1 - (persistedColorA / 255.0))
-                    + persistedColorR * (persistedColorA / 255.0)
-                );
-
-                colorG = (int64_t) (
-                    colorG * (1 - (persistedColorA / 255.0))
-                    + persistedColorG * (persistedColorA / 255.0)
-                );
-
-                colorB = (int64_t) (
-                    colorB * (1 - (persistedColorA / 255.0))
-                    + persistedColorB * (persistedColorA / 255.0)
-                );
-
-                lowerColor =
-                    (255 << 24) |
-                    ((colorR & 0xff) << 16) |
-                    ((colorG & 0xff) << 8) |
-                    (colorB & 0xff)
-                ;
-
-                persistedColorA -= persistenceAlphaDecrease;
-                if (persistedColorA < 0) {
-                    persistedColorA = 0;
-                }
-
-                nativeRenderer->persistenceBuffer[lowerPxIndex] =
-                    ((persistedColorA & 0xff) << 24) |
-                    ((persistedColorR & 0xff) << 16) |
-                    ((persistedColorG & 0xff) << 8) |
-                    (persistedColorB & 0xff)
-                ;
-
-                nativeRenderer->currentFrameBuffer[lowerPxIndex] = lowerColor;
-            }
-            
-            if (colorReductionFactor > 1) {
-                if ((upperColor & 0xffffff) != 0) {
-                    int64_t colorR = (upperColor >> 16) & 0xff;
-                    int64_t colorG = (upperColor >> 8) & 0xff;
-                    int64_t colorB = upperColor & 0xff;
-
-                    const double brightness = (colorR + colorG + colorB) / (255.0 * 3);
+                    const double persistedColorAlphaRatio = persistedColorA * fullBrightnessReciprocal;
 
                     colorR = (int64_t) (
-                        (colorR / colorReductionFactor + 0.95 + brightness)
-                    ) * colorReductionFactor;
-                    colorR = colorR > 255 ? 255 : colorR;
-    
+                        colorR * (1 - persistedColorAlphaRatio)
+                        + persistedColorR * persistedColorAlphaRatio
+                    );
+
                     colorG = (int64_t) (
-                        (colorG / colorReductionFactor + 0.95 + brightness)
-                    ) * colorReductionFactor;
-                    colorG = colorG > 255 ? 255 : colorG;
-    
+                        colorG * (1 - persistedColorAlphaRatio)
+                        + persistedColorG * persistedColorAlphaRatio
+                    );
+
                     colorB = (int64_t) (
-                        (colorB / colorReductionFactor + 0.95 + brightness)
-                    ) * colorReductionFactor;
-                    colorB = colorB > 255 ? 255 : colorB;
-    
-                    upperColor =
+                        colorB * (1 - persistedColorAlphaRatio)
+                        + persistedColorB * persistedColorAlphaRatio
+                    );
+
+                    color =
                         (255 << 24) |
                         ((colorR & 0xff) << 16) |
                         ((colorG & 0xff) << 8) |
                         (colorB & 0xff)
                     ;
-    
-                    nativeRenderer->currentFrameBuffer[upperPxIndex] = upperColor;
-                }
-    
-                if ((lowerColor & 0xffffff) != 0) {
-                    int64_t colorR = (lowerColor >> 16) & 0xff;
-                    int64_t colorG = (lowerColor >> 8) & 0xff;
-                    int64_t colorB = lowerColor & 0xff;
 
-                    const double brightness = (colorR + colorG + colorB) / (255.0 * 3);
+                    persistedColorA -= persistenceAlphaDecrease;
+                    if (persistedColorA < 0) {
+                        persistedColorA = 0;
+                    }
 
-                    colorR = (int64_t) (
-                        (colorR / colorReductionFactor + 0.95 + brightness)
-                    ) * colorReductionFactor;
-                    colorR = colorR > 255 ? 255 : colorR;
-
-                    colorG = (int64_t) (
-                        (colorG / colorReductionFactor + 0.95 + brightness)
-                    ) * colorReductionFactor;
-                    colorG = colorG > 255 ? 255 : colorG;
-
-                    colorB = (int64_t) (
-                        (colorB / colorReductionFactor + 0.95 + brightness)
-                    ) * colorReductionFactor;
-                    colorB = colorB > 255 ? 255 : colorB;
-    
-                    lowerColor =
-                        (255 << 24) |
-                        ((colorR & 0xff) << 16) |
-                        ((colorG & 0xff) << 8) |
-                        (colorB & 0xff)
+                    nativeRenderer->persistenceBuffer[pxIndex] =
+                        ((persistedColorA & 0xff) << 24) |
+                        ((persistedColorR & 0xff) << 16) |
+                        ((persistedColorG & 0xff) << 8) |
+                        (persistedColorB & 0xff)
                     ;
-    
-                    nativeRenderer->currentFrameBuffer[lowerPxIndex] = lowerColor;
+
+                    nativeRenderer->currentFrameBuffer[pxIndex] = color;
+                }
+
+                if (removedColorDepthBits > 0 && (color & 0xffffff) != 0) {
+                    int64_t colorR = (color >> 16) & 0xff;
+                    int64_t colorG = (color >> 8) & 0xff;
+                    int64_t colorB = color & 0xff;
+
+                    color =
+                        (255 << 24) |
+                        ((((colorR >> removedColorDepthBits) << removedColorDepthBits) | colorReductionCorrectionMask)<< 16) |
+                        ((((colorG >> removedColorDepthBits) << removedColorDepthBits) | colorReductionCorrectionMask) << 8) |
+                        (((colorB >> removedColorDepthBits) << removedColorDepthBits) | colorReductionCorrectionMask)
+                    ;
+
+                    nativeRenderer->currentFrameBuffer[pxIndex] = color;
+                }
+
+                if (k == 0) {
+                    upperPxIndex = pxIndex;
+                    upperColor = color;
+                } else {
+                    lowerPxIndex = pxIndex;
+                    lowerColor = color;
                 }
             }
 
@@ -522,19 +536,46 @@ size_t NativeRenderer_update(
             }
 
             if (lastUpperColor != upperColor || lastLowerColor != lowerColor) {
-                writtenCharCount = snprintf(
-                    bufferCursor,
-                    remainingBufferSize,
-                    "\033[38;2;%lu;%lu;%lu;48;2;%lu;%lu;%lum",
-                    (upperColor >> 16) & 0xff, (upperColor >> 8) & 0xff, upperColor & 0xff,
-                    (lowerColor >> 16) & 0xff, (lowerColor >> 8) & 0xff, lowerColor & 0xff
-                );
+                if (trueColorModeEnabled) {
+                    writtenCharCount = snprintf(
+                        bufferCursor,
+                        remainingBufferSize,
+                        "\033[38;2;%lu;%lu;%lu;48;2;%lu;%lu;%lum",
+                        (upperColor >> 16) & 0xff, (upperColor >> 8) & 0xff, upperColor & 0xff,
+                        (lowerColor >> 16) & 0xff, (lowerColor >> 8) & 0xff, lowerColor & 0xff
+                    );
+
+                    lastUpperColor = upperColor;
+                    lastLowerColor = lowerColor;
+                } else {
+                    double brightnessBoost = 0.3;
+
+                    const int upperColorTableIdx = 16 + fmin(215,
+                        + 36 * (int) round(brightnessBoost + 5 * ((upperColor >> 16) & 0xff) * fullBrightnessReciprocal)
+                        + 6 * (int) round(brightnessBoost + 5 * ((upperColor >> 8) & 0xff) * fullBrightnessReciprocal)
+                        + (int) round(brightnessBoost + 5 * ((upperColor >> 0) & 0xff) * fullBrightnessReciprocal)
+                    );
+
+                    const int lowerColorTableIdx = 16 + fmin(215,
+                        + 36 * (int) round(brightnessBoost + 5 * ((lowerColor >> 16) & 0xff) * fullBrightnessReciprocal)
+                        + 6 * (int) round(brightnessBoost + 5 * ((lowerColor >> 8) & 0xff) * fullBrightnessReciprocal)
+                        + (int) round(brightnessBoost + 5 * ((lowerColor >> 0) & 0xff) * fullBrightnessReciprocal)
+                    );
+
+                    writtenCharCount = snprintf(
+                        bufferCursor,
+                        remainingBufferSize,
+                        "\033[38;5;%d;48;5;%dm",
+                        upperColorTableIdx,
+                        lowerColorTableIdx
+                    );
+
+                    lastUpperColor = upperColorTableIdx;
+                    lastLowerColor = lowerColorTableIdx;
+                }
 
                 remainingBufferSize -= writtenCharCount;
                 bufferCursor += writtenCharCount;
-
-                lastUpperColor = upperColor;
-                lastLowerColor = lowerColor;
             }
 
             writtenCharCount = snprintf(
@@ -550,6 +591,7 @@ size_t NativeRenderer_update(
 
             if (remainingBufferSize < 512) {
                 php_output_write(buffer, strlen(buffer));
+                php_output_flush();
 
                 buffer[0] = 0;
                 bufferCursor = buffer;
@@ -559,6 +601,7 @@ size_t NativeRenderer_update(
     }
 
     php_output_write(buffer, strlen(buffer));
+    php_output_flush();
 
     memcpy(
         nativeRenderer->previousFrameBuffer,

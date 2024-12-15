@@ -12,6 +12,9 @@
         }
     ],
     "require": {
-        "ext-ffi": "^8.2"
+        "ext-ffi": "^8.0",
+        "ext-zend-opcache": "^8.0",
+        "ext-ctype": "^8.0",
+        "ext-igbinary": "^3.2.16"
     }
 }

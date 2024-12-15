@@ -15,7 +15,7 @@ class RandomUtils
                 * 2 // octet char-length in hex
                 - 2 // to avoid having hexdec generating a float due to integer overflow
         */
-        return \hexdec(\substr(\md5(\serialize($data)), 0, 8 * 2 - 2));
+        return \hexdec(\substr(\md5(\igbinary_serialize($data)), 0, 8 * 2 - 2));
     }
 
     public static function getRandomBool(float $trueProbability = 0.5): bool

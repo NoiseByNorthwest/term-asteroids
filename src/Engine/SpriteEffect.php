@@ -40,7 +40,7 @@ class SpriteEffect
 
     public function start(): void
     {
-        $this->startedAt = Timer::getCurrentFrameStartTime();
+        $this->startedAt = Timer::getCurrentGameTime();
     }
 
     public function updateRenderingParameters(SpriteRenderingParameters $renderingParameters): void
@@ -49,7 +49,7 @@ class SpriteEffect
             return;
         }
 
-        $currentTime = Timer::getCurrentFrameStartTime();
+        $currentTime = Timer::getCurrentGameTime();
 
         if ($currentTime > $this->startedAt + $this->duration) {
             $this->startedAt = null;

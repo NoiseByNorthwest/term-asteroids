@@ -11,19 +11,20 @@ abstract class ClassUtils
      */
     public static function getLocalChildClassNames(string $className): array
     {
-        $class = new \ReflectionClass($className);
-        $fileName = $class->getFileName();
-        $childClassNames = [];
-        foreach (glob(dirname($fileName) . '/*.php') as $file) {
-            $name = basename($file, '.php');
-            $childClassName = $class->getNamespaceName() . '\\' . $name;
-            if ($childClassName === $className || ! is_subclass_of($childClassName, $className)) {
-                continue;
+        return CacheUtils::memoize(__METHOD__ . ':' . $className, function () use($className) {
+            $class = new \ReflectionClass($className);
+            $fileName = $class->getFileName();
+            $childClassNames = [];
+            foreach (glob(dirname($fileName) . '/*.php') as $file) {
+                $name = basename($file, '.php');
+                $childClassName = $class->getNamespaceName() . '\\' . $name;
+                if ($childClassName === $className || !is_subclass_of($childClassName, $className)) {
+                    continue;
+                }
+
+                $childClassNames[] = $childClassName;
             }
-
-            $childClassNames[] = $childClassName;
-        }
-
-        return $childClassNames;
+            return $childClassNames;
+        });
     }
 }

@@ -8,13 +8,10 @@ class Vec2
 
     private float $y;
 
-    private ?self $referencePos;
-
-    public function __construct(float $x = 0, float $y = 0, ?self $referencePos = null)
+    public function __construct(float $x = 0, float $y = 0)
     {
         $this->x = $x;
         $this->y = $y;
-        $this->referencePos = $referencePos;
     }
 
     public function __toString(): string
@@ -24,23 +21,13 @@ class Vec2
 
     public function copy(): self
     {
-        return new self($this->x, $this->y, $this->referencePos);
-    }
-
-    public function creatRelativePos(float $x = 0, float $y = 0): self
-    {
-        return new self($x, $y, $this);
+        return new self($this->x, $this->y);
     }
 
     /**
      * @return float
      */
     public function getX(): float
-    {
-        return $this->x + ($this->referencePos?->getX() ?? 0);
-    }
-
-    public function getRelativeX(): float
     {
         return $this->x;
     }
@@ -49,11 +36,6 @@ class Vec2
      * @return float
      */
     public function getY(): float
-    {
-        return $this->y + ($this->referencePos?->getY() ?? 0);
-    }
-
-    public function getRelativeY(): float
     {
         return $this->y;
     }
