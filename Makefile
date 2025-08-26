@@ -143,6 +143,7 @@ select.term.alacritty: ## Use alacritty as terminal emulator (must be installed 
 _exec: init
 	@case "$(SELECTED_TERM)" in
 		xterm)
+			xhost +SI:localuser:$(whoami)
 			docker exec -it \
 				$(DOCKER_CONTAINER_NAME) \
 				/usr/bin/env LANG=C.UTF-8 /usr/bin/xterm -s -j -geometry 300x77 -fg white -bg black -T TermAsteroids@xterm \
@@ -155,6 +156,7 @@ _exec: init
 				docker exec -it $(DOCKER_CONTAINER_NAME) /bin/bash -c 'sudo apt-get update && sudo apt-get install -y rxvt-unicode'
 			fi
 
+			xhost +SI:localuser:$(whoami)
 			docker exec -it \
 				$(DOCKER_CONTAINER_NAME) \
 				/usr/bin/env LANG=C.UTF-8 rxvt -ss -j -geometry 305x77 -fg white -bg black -T TermAsteroids@rxvt \
